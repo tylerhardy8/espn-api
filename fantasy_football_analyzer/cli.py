@@ -4,8 +4,9 @@ Usage:
     python -m fantasy_football_analyzer setup
     python -m fantasy_football_analyzer history [--years 2020-2024]
     python -m fantasy_football_analyzer draft [--team "My Team"]
-    python -m fantasy_football_analyzer trades [--team "My Team"]
-    python -m fantasy_football_analyzer waivers [--team "My Team"] [--week 5]
+    python -m fantasy_football_analyzer trades [--team "My Team"] [--ai]
+    python -m fantasy_football_analyzer waivers [--team "My Team"] [--week 5] [--ai]
+    python -m fantasy_football_analyzer live-draft --team "My Team" [--interval 10]
     python -m fantasy_football_analyzer full [--team "My Team"] [--years 2020-2024]
 """
 
@@ -26,6 +27,18 @@ def parse_year_range(year_str):
         start, end = year_str.split("-")
         return list(range(int(start), int(end) + 1))
     return [int(y.strip()) for y in year_str.split(",")]
+
+
+def _get_league_or_exit(args):
+    """Load config and connect to league; exit on failure."""
+    config = load_config(args.config)
+    league_cfg = get_league_config(config)
+
+    if not league_cfg["league_id"]:
+        print("Error: No league configured. Run 'setup' first.")
+        sys.exit(1)
+
+    return config, league_cfg
 
 
 def cmd_setup(args):
@@ -82,12 +95,7 @@ def cmd_setup(args):
 
 def cmd_history(args):
     """Run historical analysis across multiple seasons."""
-    config = load_config(args.config)
-    league_cfg = get_league_config(config)
-
-    if not league_cfg["league_id"]:
-        print("Error: No league configured. Run 'setup' first.")
-        return
+    config, league_cfg = _get_league_or_exit(args)
 
     years = parse_year_range(args.years) if args.years else [config.get("year", 2025)]
     print(f"Loading {len(years)} season(s): {years}")
@@ -107,12 +115,7 @@ def cmd_history(args):
 
 def cmd_draft(args):
     """Run draft analysis and recommendations."""
-    config = load_config(args.config)
-    league_cfg = get_league_config(config)
-
-    if not league_cfg["league_id"]:
-        print("Error: No league configured. Run 'setup' first.")
-        return
+    config, league_cfg = _get_league_or_exit(args)
 
     year = int(args.year) if args.year else config.get("year", 2025)
     team_name = args.team or config.get("team_name")
@@ -126,12 +129,7 @@ def cmd_draft(args):
 
 def cmd_trades(args):
     """Run trade analysis and recommendations."""
-    config = load_config(args.config)
-    league_cfg = get_league_config(config)
-
-    if not league_cfg["league_id"]:
-        print("Error: No league configured. Run 'setup' first.")
-        return
+    config, league_cfg = _get_league_or_exit(args)
 
     year = int(args.year) if args.year else config.get("year", 2025)
     team_name = args.team or config.get("team_name")
@@ -142,15 +140,36 @@ def cmd_trades(args):
 
     print(format_trade_report(league, my_team_name=team_name))
 
+    if getattr(args, "ai", False):
+        from .ai_advisor import get_trade_evaluation_ai
+        from .trades import evaluate_roster_strength
+
+        print("\n--- AI TRADE ANALYSIS ---")
+        context_lines = []
+        for team in league.teams:
+            strengths = evaluate_roster_strength(team)
+            context_lines.append(f"{team.team_name} ({team.wins}-{team.losses}):")
+            for pos in ["QB", "RB", "WR", "TE"]:
+                if pos in strengths:
+                    names = ", ".join(p["name"] for p in strengths[pos]["starters"])
+                    context_lines.append(f"  {pos}: {names} ({strengths[pos]['starter_points']:.1f} pts)")
+
+        if team_name:
+            prompt = (
+                f"I manage '{team_name}'. Analyze my roster and suggest the best "
+                f"trade I could propose to improve my team. Consider positional "
+                f"needs and what other teams might accept."
+            )
+        else:
+            prompt = "Analyze these rosters and suggest the most impactful trade that could happen in this league."
+
+        advice = get_trade_evaluation_ai(prompt, "\n".join(context_lines))
+        print(advice)
+
 
 def cmd_waivers(args):
     """Run waiver wire analysis and recommendations."""
-    config = load_config(args.config)
-    league_cfg = get_league_config(config)
-
-    if not league_cfg["league_id"]:
-        print("Error: No league configured. Run 'setup' first.")
-        return
+    config, league_cfg = _get_league_or_exit(args)
 
     year = int(args.year) if args.year else config.get("year", 2025)
     team_name = args.team or config.get("team_name")
@@ -160,17 +179,55 @@ def cmd_waivers(args):
     league = connect_league(league_cfg["league_id"], year,
                             league_cfg["espn_s2"], league_cfg["swid"])
 
-    print(format_waiver_report(league, my_team_name=team_name, week=week))
+    report = format_waiver_report(league, my_team_name=team_name, week=week)
+    print(report)
+
+    if getattr(args, "ai", False):
+        from .ai_advisor import get_waiver_advice_ai
+
+        print("\n--- AI WAIVER WIRE ANALYSIS ---")
+        prompt = f"Here is my league's waiver wire report"
+        if team_name:
+            prompt += f" (I manage '{team_name}')"
+        prompt += (
+            ". Provide strategic recommendations on who to pick up, who to drop, "
+            "and any sleepers to target.\n\n" + report
+        )
+        advice = get_waiver_advice_ai(prompt)
+        print(advice)
+
+
+def cmd_live_draft(args):
+    """Run the live draft tracker with AI-powered recommendations."""
+    config, league_cfg = _get_league_or_exit(args)
+
+    year = int(args.year) if args.year else config.get("year", 2025)
+    team_name = args.team or config.get("team_name")
+    interval = int(args.interval) if args.interval else 10
+    model = args.model or None
+
+    if not team_name:
+        print("Error: --team is required for live-draft. Set it in setup or pass --team.")
+        return
+
+    print(f"Loading {year} season...")
+    league = connect_league(league_cfg["league_id"], year,
+                            league_cfg["espn_s2"], league_cfg["swid"])
+
+    from .ai_advisor import LiveDraftAdvisor
+
+    advisor = LiveDraftAdvisor(
+        league, team_name,
+        poll_interval=interval,
+        model=model,
+    )
+    advisor.auto_advise = not args.no_auto
+    advisor.run()
 
 
 def cmd_full(args):
     """Run full analysis (history + draft + trades + waivers)."""
-    config = load_config(args.config)
-    league_cfg = get_league_config(config)
-
-    if not league_cfg["league_id"]:
-        print("Error: No league configured. Run 'setup' first.")
-        return
+    config, league_cfg = _get_league_or_exit(args)
 
     year = int(args.year) if args.year else config.get("year", 2025)
     team_name = args.team or config.get("team_name")
@@ -201,6 +258,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="Fantasy Football Analyzer - ESPN League Analysis Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s setup                                  Configure league credentials
+  %(prog)s history --years 2020-2025              Multi-year trend analysis
+  %(prog)s draft --team "My Team"                 Draft review and VBD analysis
+  %(prog)s trades --team "My Team" --ai           Trade suggestions with AI analysis
+  %(prog)s waivers --team "My Team" --week 8      Waiver wire recommendations
+  %(prog)s live-draft --team "My Team"            Real-time draft tracker with AI advisor
+  %(prog)s full --team "My Team" --years 2020-2025  Run everything
+        """,
     )
     parser.add_argument("--config", default=None, help="Path to config file")
 
@@ -222,12 +289,28 @@ def main():
     trade_parser = subparsers.add_parser("trades", help="Trade analysis and recommendations")
     trade_parser.add_argument("--team", help="Your team name")
     trade_parser.add_argument("--year", help="Season year")
+    trade_parser.add_argument("--ai", action="store_true",
+                              help="Include AI-powered trade analysis (requires ANTHROPIC_API_KEY)")
 
     # waivers
     waiver_parser = subparsers.add_parser("waivers", help="Waiver wire recommendations")
     waiver_parser.add_argument("--team", help="Your team name")
     waiver_parser.add_argument("--year", help="Season year")
     waiver_parser.add_argument("--week", help="NFL week number")
+    waiver_parser.add_argument("--ai", action="store_true",
+                               help="Include AI-powered waiver analysis (requires ANTHROPIC_API_KEY)")
+
+    # live-draft
+    live_parser = subparsers.add_parser("live-draft",
+                                        help="Real-time draft tracker with AI advisor")
+    live_parser.add_argument("--team", help="Your team name (required)")
+    live_parser.add_argument("--year", help="Season year")
+    live_parser.add_argument("--interval", default="10",
+                             help="Poll interval in seconds (default: 10)")
+    live_parser.add_argument("--model", default=None,
+                             help="Claude model to use (default: claude-sonnet-4-6)")
+    live_parser.add_argument("--no-auto", action="store_true",
+                             help="Disable automatic AI advice before your picks")
 
     # full
     full_parser = subparsers.add_parser("full", help="Run all analyses")
@@ -243,6 +326,7 @@ def main():
         "draft": cmd_draft,
         "trades": cmd_trades,
         "waivers": cmd_waivers,
+        "live-draft": cmd_live_draft,
         "full": cmd_full,
     }
 
