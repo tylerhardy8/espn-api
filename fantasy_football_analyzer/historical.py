@@ -126,6 +126,34 @@ def _build_player_stats_map(league):
     return stats
 
 
+def build_draft_stats_map(league):
+    """Stats map covering every drafted player.
+
+    Players dropped mid-season aren't on any end-of-season roster, so a
+    roster-only lookup scores them 0 (and hides their position). Batch-fetch
+    the missing ones directly.
+    """
+    player_stats = _build_player_stats_map(league)
+    if not league.draft:
+        return player_stats
+
+    missing = list({p.playerId for p in league.draft} - set(player_stats))
+    for i in range(0, len(missing), 50):
+        try:
+            fetched = league.player_info(playerId=missing[i:i + 50]) or []
+        except Exception:
+            continue
+        if not isinstance(fetched, list):
+            fetched = [fetched]
+        for player in fetched:
+            player_stats[player.playerId] = (
+                player.total_points,
+                getattr(player, "avg_points", 0),
+                getattr(player, "position", ""),
+            )
+    return player_stats
+
+
 def analyze_draft_history(leagues_by_year):
     """Analyze draft pick effectiveness across seasons.
 
@@ -137,25 +165,7 @@ def analyze_draft_history(leagues_by_year):
         if not league.draft:
             continue
 
-        player_stats = _build_player_stats_map(league)
-
-        # Players dropped mid-season aren't on any end-of-season roster, so a
-        # roster-only lookup scores them 0 and floods the busts list. Fetch
-        # their season stats directly instead.
-        missing = list({p.playerId for p in league.draft} - set(player_stats))
-        for i in range(0, len(missing), 50):
-            try:
-                fetched = league.player_info(playerId=missing[i:i + 50]) or []
-            except Exception:
-                continue
-            if not isinstance(fetched, list):
-                fetched = [fetched]
-            for player in fetched:
-                player_stats[player.playerId] = (
-                    player.total_points,
-                    getattr(player, "avg_points", 0),
-                    getattr(player, "position", ""),
-                )
+        player_stats = build_draft_stats_map(league)
 
         year_picks = []
         for pick in league.draft:

@@ -18,7 +18,7 @@ from ..rss_news import fetch_news, match_news_to_players
 
 from .helpers import (
     ai_available, get_league_or_redirect, clear_league_cache, parse_year_range,
-    get_valued_pool,
+    get_valued_pool, get_league_intel,
 )
 
 bp = Blueprint("main", __name__)
@@ -649,7 +649,32 @@ def api_draft_recommendation():
         from ..ai_advisor import get_ai_recommendation
 
         state = _build_draft_state(league, config)
-        advice = get_ai_recommendation(state, team_name, league)
+        intel_text = _get_intel_text(league, config, team_name)
+        advice = get_ai_recommendation(state, team_name, league, intel_text=intel_text)
         return jsonify({"recommendation": advice})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+def _get_intel_text(league, config, team_name):
+    """League-history intel block for the AI, or None — never blocks advice."""
+    try:
+        from ..league_intel import format_intel_for_ai
+        from ..historical import get_manager_key
+
+        intel = get_league_intel(config)
+        if not intel:
+            return None
+
+        my_manager = None
+        if team_name:
+            team = next(
+                (t for t in league.teams if t.team_name.lower() == team_name.lower()),
+                None,
+            )
+            if team is not None:
+                my_manager = get_manager_key(team)[0]
+
+        return format_intel_for_ai(intel, my_manager=my_manager) or None
+    except Exception:
+        return None

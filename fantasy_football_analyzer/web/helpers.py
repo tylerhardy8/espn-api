@@ -16,6 +16,12 @@ _CACHE_TTL = 60  # seconds
 _pool_cache = {}
 _POOL_TTL = 600  # seconds
 
+# League history intel cache — building it connects several past seasons, and
+# history doesn't change, so cache effectively for the whole session.
+_intel_cache = {}
+_INTEL_TTL = 12 * 3600  # seconds
+INTEL_SEASONS_BACK = 4
+
 
 def ai_available():
     """Check if the Anthropic API key is configured."""
@@ -76,10 +82,41 @@ def get_valued_pool(league, config=None):
     return result
 
 
+def get_league_intel(config):
+    """Build (and cache) the league history intelligence profile.
+
+    Connects the previous INTEL_SEASONS_BACK seasons and mines draft, trade,
+    and results patterns. Returns the intel dict, or None if no history loads.
+    """
+    from ..league_connector import connect_multi_year
+    from ..league_intel import build_league_intel
+
+    league_cfg = get_league_config(config)
+    if not league_cfg.get("league_id"):
+        return None
+
+    year = config.get("year", 2025)
+    key = f"{league_cfg['league_id']}_{year}"
+    if key in _intel_cache:
+        cached, cached_time = _intel_cache[key]
+        if time.time() - cached_time < _INTEL_TTL:
+            return cached
+
+    years = list(range(year - INTEL_SEASONS_BACK, year))
+    leagues = connect_multi_year(
+        league_cfg["league_id"], years,
+        league_cfg.get("espn_s2"), league_cfg.get("swid"),
+    )
+    intel = build_league_intel(leagues) if leagues else None
+    _intel_cache[key] = (intel, time.time())
+    return intel
+
+
 def clear_league_cache():
     """Clear the cached league connections."""
     _league_cache.clear()
     _pool_cache.clear()
+    _intel_cache.clear()
 
 
 def parse_year_range(year_str):

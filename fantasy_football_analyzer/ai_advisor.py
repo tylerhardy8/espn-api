@@ -239,12 +239,14 @@ BUDGET CHECK: [1 sentence on your spending pace vs. remaining needs]
 WATCH OUT: [1 sentence on a run, a cash-rich rival, or a tier about to vanish]"""
 
 
-def get_ai_recommendation(draft_state, my_team_name, league, model=None):
+def get_ai_recommendation(draft_state, my_team_name, league, model=None, intel_text=None):
     """Get an AI-powered draft recommendation from Claude.
 
     Sends the current draft context to Claude and returns a structured
     recommendation with reasoning. Auction drafts (detected from league
     settings or observed bids) get auction-specific context and strategy.
+    `intel_text` optionally appends a league-history intelligence block
+    (manager tendencies, spending patterns, champion profiles).
     """
     _check_api_available()
 
@@ -252,6 +254,8 @@ def get_ai_recommendation(draft_state, my_team_name, league, model=None):
 
     if getattr(draft_state, "is_auction", False) and getattr(draft_state, "pool", None):
         context = build_auction_context(draft_state, my_team_name, league)
+        if intel_text:
+            context += "\n\n" + intel_text
         system_prompt = AUCTION_SYSTEM_PROMPT
         user_prompt = (
             f"Here is the current auction draft state. I am managing '{my_team_name}'. "
@@ -267,6 +271,8 @@ def get_ai_recommendation(draft_state, my_team_name, league, model=None):
         return message.content[0].text
 
     context = build_draft_context(draft_state, my_team_name, league)
+    if intel_text:
+        context += "\n\n" + intel_text
 
     system_prompt = """You are an expert fantasy football draft advisor. You analyze draft boards,
 positional scarcity, value-based drafting (VBD), and team needs to provide optimal pick recommendations.
