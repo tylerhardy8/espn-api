@@ -22,6 +22,8 @@ class BaseSettings(object):
         self._raw_schedule_settings = data.get('scheduleSettings', {})
         self.faab = data['acquisitionSettings']['isUsingAcquisitionBudget']
         self.acquisition_budget = data.get('acquisitionSettings', {}).get('acquisitionBudget', 0)
+        self.draft_type = data.get('draftSettings', {}).get('type', '')
+        self.auction_budget = data.get('draftSettings', {}).get('auctionBudget', 0)
         divisions = data.get('scheduleSettings', {}).get('divisions', [])
         for division in divisions: self.division_map[division.get('id', 0)] = division.get('name')
 

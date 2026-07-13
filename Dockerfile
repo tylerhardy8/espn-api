@@ -18,8 +18,11 @@ RUN pip install --no-cache-dir -e .
 COPY . .
 
 # Install the analyzer's additional dependencies (anthropic is optional)
-RUN pip install --no-cache-dir anthropic pytest
+RUN pip install --no-cache-dir flask anthropic feedparser pytest
 
-# Default: run the analyzer CLI
+# Expose web UI port
+EXPOSE 5000
+
+# Default: run the web UI
 ENTRYPOINT ["python", "-m", "fantasy_football_analyzer"]
-CMD ["--help"]
+CMD ["web", "--host", "0.0.0.0", "--port", "5000"]

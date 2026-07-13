@@ -38,15 +38,8 @@ def _check_api_available():
         )
 
 
-def build_draft_context(draft_state, my_team_name, league, num_available=40):
-    """Build a structured context string describing the current draft state
-    for the AI advisor to reason about.
-    """
-    summary = draft_state.get_board_summary()
-    recent = draft_state.get_recent_picks(count=10)
-    my_picks = draft_state.get_team_picks(my_team_name)
-
-    # League settings context
+def _league_settings_info(league, summary):
+    """Shared league-settings lines (name, size, scoring, roster slots)."""
     settings_info = []
     if hasattr(league.settings, "name"):
         settings_info.append(f"League: {league.settings.name}")
@@ -76,6 +69,19 @@ def build_draft_context(draft_state, my_team_name, league, num_available=40):
                 slot_parts.append(f"{pos}:{count}")
         if slot_parts:
             settings_info.append(f"Roster slots: {', '.join(slot_parts)}")
+
+    return settings_info
+
+
+def build_draft_context(draft_state, my_team_name, league, num_available=40):
+    """Build a structured context string describing the current draft state
+    for the AI advisor to reason about.
+    """
+    summary = draft_state.get_board_summary()
+    recent = draft_state.get_recent_picks(count=10)
+    my_picks = draft_state.get_team_picks(my_team_name)
+
+    settings_info = _league_settings_info(league, summary)
 
     # Build available players list grouped by position
     available_by_pos = {}
@@ -144,16 +150,123 @@ def _lookup_player_position(player_id, league):
     return None
 
 
+def build_auction_context(draft_state, my_team_name, league):
+    """Build a structured context string for an auction draft: budgets, max
+    bids, inflation, tiered values, recent sales with bargain/overpay deltas.
+    """
+    summary = draft_state.get_board_summary()
+    settings_info = _league_settings_info(league, summary)
+    inflation = draft_state.get_inflation()
+    budgets = draft_state.get_budgets()
+
+    lines = [
+        "=== AUCTION DRAFT STATE ===",
+        "\n".join(settings_info),
+        f"Auction budget per team: ${draft_state.budget} | Roster size: {draft_state.roster_size}",
+        f"Players sold: {summary['players_drafted']} | "
+        f"Inflation: {inflation:.2f}x "
+        f"({'prices running HOT' if inflation > 1.05 else 'bargains available' if inflation < 0.95 else 'near value'})",
+    ]
+
+    lines.append("\n--- TEAM BUDGETS ---")
+    lines.append(f"{'Team':<28} {'Spent':>6} {'Left':>6} {'MaxBid':>7} {'Slots':>6}")
+    for b in budgets:
+        marker = "  <== ME" if b["team"].lower() == my_team_name.lower() else ""
+        lines.append(
+            f"{b['team']:<28} ${b['spent']:>5} ${b['remaining']:>5} "
+            f"${b['max_bid']:>6} {b['slots_left']:>6}{marker}"
+        )
+
+    my_picks = draft_state.get_team_picks(my_team_name)
+    lines.append(f"\n--- MY ROSTER ({my_team_name}) ---")
+    if my_picks:
+        for p in my_picks:
+            lines.append(f"  {p['player_name']} ({p.get('position') or '?'}) — ${p['bid_amount']}")
+    else:
+        lines.append("  No players won yet.")
+
+    needs = draft_state.get_team_needs(my_team_name)
+    if needs:
+        lines.append("  Needs: " + ", ".join(f"{pos} x{n}" for pos, n in sorted(needs.items())))
+
+    recent = draft_state.get_recent_picks(count=10)
+    if recent:
+        lines.append("\n--- RECENT SALES ---")
+        for p in recent:
+            delta = p.get("value_delta")
+            tag = ""
+            if delta is not None:
+                tag = f" ({'bargain' if delta > 0 else 'overpay'} {delta:+.0f})"
+            lines.append(
+                f"  {p['player_name']} ({p.get('position') or '?'}) -> "
+                f"{p['team_name']} ${p['bid_amount']}{tag}"
+            )
+
+    if draft_state.active_run:
+        run = draft_state.active_run
+        lines.append(f"\n!! POSITION RUN: {run['count']} of the last 5 sales were {run['position']}s")
+
+    lines.append("\n--- BEST AVAILABLE (inflation-adjusted values) ---")
+    for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
+        top = draft_state.get_available_ranked(limit=6, position=pos)
+        if not top:
+            continue
+        parts = [
+            f"{e['name']} T{e.get('tier', '?')} ${e['adjusted_value']:.0f}"
+            for e in top
+        ]
+        lines.append(f"  {pos}: " + " | ".join(parts))
+
+    return "\n".join(lines)
+
+
+AUCTION_SYSTEM_PROMPT = """You are an expert fantasy football AUCTION draft advisor. You analyze budgets,
+player dollar values, inflation, and tier scarcity to maximize projected points per dollar spent.
+
+Your advice must consider:
+1. VALUE DISCIPLINE: Compare listed (inflation-adjusted) values to likely prices. Recommend a max bid for each target and insist on walking away above it.
+2. TIER URGENCY: If a tier is about to empty at a position of need, paying slight premiums beats getting shut out.
+3. BUDGET LEVERAGE: Track who can outbid whom (max bids). If opponents are cash-poor, targets can be had at discounts; if one team hoards cash, expect late-draft sniping.
+4. NOMINATION STRATEGY: Nominate players you DON'T want while others still have money — drain budgets on positions you've filled or players you're out on.
+5. ENDGAME: When budgets thin out, identify the $1-2 players worth rostering and the slots to save for them.
+6. AVOID: overpaying early out of excitement, leaving money unspent at the end, and bidding wars at positions of surplus.
+
+Format your response as:
+TARGETS NOW: [2-3 players with max bid each, e.g., "Player X — bid up to $23"]
+REASONING: [2-3 sentences: values vs. room prices, tier and budget situation]
+NOMINATE NEXT: [1 player to nominate and why]
+BUDGET CHECK: [1 sentence on your spending pace vs. remaining needs]
+WATCH OUT: [1 sentence on a run, a cash-rich rival, or a tier about to vanish]"""
+
+
 def get_ai_recommendation(draft_state, my_team_name, league, model=None):
     """Get an AI-powered draft recommendation from Claude.
 
     Sends the current draft context to Claude and returns a structured
-    recommendation with reasoning.
+    recommendation with reasoning. Auction drafts (detected from league
+    settings or observed bids) get auction-specific context and strategy.
     """
     _check_api_available()
 
-    context = build_draft_context(draft_state, my_team_name, league)
     model = model or DEFAULT_MODEL
+
+    if getattr(draft_state, "is_auction", False) and getattr(draft_state, "pool", None):
+        context = build_auction_context(draft_state, my_team_name, league)
+        system_prompt = AUCTION_SYSTEM_PROMPT
+        user_prompt = (
+            f"Here is the current auction draft state. I am managing '{my_team_name}'. "
+            f"Advise me on my next moves.\n\n{context}"
+        )
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model=model,
+            max_tokens=MAX_TOKENS,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        return message.content[0].text
+
+    context = build_draft_context(draft_state, my_team_name, league)
 
     system_prompt = """You are an expert fantasy football draft advisor. You analyze draft boards,
 positional scarcity, value-based drafting (VBD), and team needs to provide optimal pick recommendations.

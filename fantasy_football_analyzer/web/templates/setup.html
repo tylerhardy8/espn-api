@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Setup - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h2 class="mb-4"><i class="bi bi-gear-fill text-warning"></i> League Setup</h2>
+
+        <div class="card">
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('main.setup') }}">
+                    <div class="mb-3">
+                        <label for="league_id" class="form-label fw-bold">ESPN League ID <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control" id="league_id" name="league_id"
+                               value="{{ config.get('league_id', '') }}" required
+                               placeholder="e.g. 12345678">
+                        <div class="form-text">
+                            Find this in your ESPN Fantasy league URL:
+                            <code>fantasy.espn.com/football/league?leagueId=<strong>12345678</strong></code>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="year" class="form-label fw-bold">Season Year</label>
+                        <input type="number" class="form-control" id="year" name="year"
+                               value="{{ config.get('year', 2025) }}"
+                               min="2010" max="2030" placeholder="2025">
+                    </div>
+
+                    <hr class="my-4">
+                    <h5 class="text-muted mb-3">
+                        <i class="bi bi-lock"></i> Private League Credentials
+                        <small class="text-muted">(optional for public leagues)</small>
+                    </h5>
+
+                    <div class="mb-3">
+                        <label for="espn_s2" class="form-label fw-bold">espn_s2 Cookie</label>
+                        <textarea class="form-control font-monospace" id="espn_s2" name="espn_s2"
+                                  rows="3" placeholder="Paste your espn_s2 cookie value here...">{{ config.get('espn_s2', '') }}</textarea>
+                        <div class="form-text">
+                            Open ESPN Fantasy in your browser &rarr; Developer Tools &rarr; Application &rarr; Cookies &rarr;
+                            find <code>espn_s2</code> and copy its value.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="swid" class="form-label fw-bold">SWID Cookie</label>
+                        <input type="text" class="form-control font-monospace" id="swid" name="swid"
+                               value="{{ config.get('swid', '') }}"
+                               placeholder="{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}">
+                        <div class="form-text">
+                            Found in the same Cookies panel as <code>espn_s2</code>. Looks like a GUID in curly braces.
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <div class="mb-4">
+                        <label for="team_name" class="form-label fw-bold">Your Team Name</label>
+                        <input type="text" class="form-control" id="team_name" name="team_name"
+                               value="{{ config.get('team_name', '') }}"
+                               placeholder="e.g. My Fantasy Team">
+                        <div class="form-text">
+                            Used to personalize recommendations. Must match your ESPN team name exactly.
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-warning btn-lg w-100">
+                        <i class="bi bi-check-circle"></i> Save &amp; Test Connection
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        {# AI Configuration #}
+        <div class="card mt-4" id="ai-setup">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-robot"></i> AI Analysis (Optional)</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="me-2">Status:</span>
+                    {% if ai_available %}
+                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> API Key Configured</span>
+                    {% else %}
+                    <span class="badge bg-secondary"><i class="bi bi-x-circle"></i> Not Configured</span>
+                    {% endif %}
+                </div>
+
+                <p>
+                    AI-powered analysis uses Claude to provide intelligent trade evaluations,
+                    waiver wire strategy, and live draft recommendations.
+                </p>
+
+                <h6 class="fw-bold">How to enable:</h6>
+                <ol>
+                    <li>
+                        Get an API key from
+                        <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>
+                    </li>
+                    <li>
+                        Set the <code>ANTHROPIC_API_KEY</code> environment variable before starting the app:
+                        <pre class="bg-dark border rounded p-2 mt-2 mb-2"><code>export ANTHROPIC_API_KEY="sk-ant-..."
+python -m fantasy_football_analyzer web</code></pre>
+                    </li>
+                    <li>
+                        Or with Docker:
+                        <pre class="bg-dark border rounded p-2 mt-2 mb-0"><code>docker run -p 5050:5000 -e ANTHROPIC_API_KEY="sk-ant-..." espn-api</code></pre>
+                    </li>
+                </ol>
+
+                <p class="text-muted mb-0">
+                    <small><i class="bi bi-info-circle"></i> AI features appear on Trades, Waivers, and Live Draft pages when the key is set.</small>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

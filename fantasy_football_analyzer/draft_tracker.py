@@ -15,24 +15,44 @@ from .draft import VBD_BASELINES, ROSTER_TARGETS
 
 
 class DraftState:
-    """Maintains the current state of a live draft."""
+    """Maintains the current state of a live draft.
 
-    def __init__(self, league):
+    When constructed with a valued player pool (see auction.build_valued_pool),
+    the state becomes auction-aware: it knows player positions, dollar values,
+    per-team budgets, and can compute inflation-adjusted values.
+    """
+
+    def __init__(self, league, pool=None, budget=None, targets=None, roster_size=None):
         self.league = league
         self.picks = []  # list of pick dicts in order
         self.available_players = {}  # player_id -> player_name
         self.drafted_ids = set()
         self.team_rosters = defaultdict(list)  # team_name -> [picks]
-        self.position_runs = []  # track positional runs
+        self.active_run = None  # {"position", "count"} when a positional run is on
         self.round = 0
         self.pick_number = 0
         self.total_teams = len(league.teams)
         self.total_rounds = 0  # determined from settings or observed
 
-        # Build full player pool from league's player_map
-        for pid, name in league.player_map.items():
-            if isinstance(pid, int):
-                self.available_players[pid] = name
+        self.pool = pool or {}
+        self.budget = budget or getattr(league.settings, "auction_budget", 0) or 200
+        self.is_auction = getattr(league.settings, "draft_type", "") == "AUCTION"
+        self.targets = targets or {
+            pos: t["total"] for pos, t in ROSTER_TARGETS.items() if pos != "FLEX"
+        }
+        self.roster_size = roster_size or 16
+
+        if self.pool:
+            for pid, entry in self.pool.items():
+                self.available_players[pid] = entry["name"]
+        else:
+            # Fallback: bare name pool from league's player_map
+            for pid, name in league.player_map.items():
+                if isinstance(pid, int):
+                    self.available_players[pid] = name
+
+    def _pool_entry(self, player_id):
+        return self.pool.get(player_id, {})
 
     def apply_picks(self, draft_picks):
         """Apply a list of BasePick objects to the draft state.
@@ -41,15 +61,21 @@ class DraftState:
         """
         new_picks = draft_picks[len(self.picks):]
         for pick in new_picks:
+            entry = self._pool_entry(pick.playerId)
+            expected = entry.get("value")
+            bid = pick.bid_amount or 0
             pick_data = {
                 "round": pick.round_num,
                 "round_pick": pick.round_pick,
                 "overall": (pick.round_num - 1) * self.total_teams + pick.round_pick,
                 "player_name": pick.playerName,
                 "player_id": pick.playerId,
+                "position": entry.get("position", ""),
                 "team_name": pick.team.team_name if pick.team else "Unknown",
                 "team_id": pick.team.team_id if pick.team else 0,
-                "bid_amount": pick.bid_amount,
+                "bid_amount": bid,
+                "expected_value": expected,
+                "value_delta": round(expected - bid, 1) if expected is not None else None,
                 "keeper": pick.keeper_status,
                 "timestamp": datetime.now().isoformat(),
             }
@@ -60,33 +86,95 @@ class DraftState:
             self.round = pick.round_num
             self.pick_number = pick_data["overall"]
 
-        self._detect_position_runs(new_picks)
+        if any(p["bid_amount"] for p in self.picks):
+            self.is_auction = True
+
+        self._detect_position_runs()
         return new_picks
 
-    def _detect_position_runs(self, new_picks):
-        """Detect when multiple players at the same position are picked consecutively."""
-        if len(self.picks) < 3:
+    def _detect_position_runs(self, window=5, threshold=3):
+        """Flag a positional run when >= threshold of the last `window` picks share a position."""
+        self.active_run = None
+        recent = [p for p in self.picks[-window:] if p.get("position")]
+        if len(recent) < threshold:
             return
-
-        recent = self.picks[-5:]
-        # Use player_map to infer position isn't directly available from picks,
-        # so we track runs by counting consecutive same-position picks
-        # This is a simplified heuristic
-        pass
+        counts = defaultdict(int)
+        for p in recent:
+            counts[p["position"]] += 1
+        position, count = max(counts.items(), key=lambda kv: kv[1])
+        if count >= threshold:
+            self.active_run = {"position": position, "count": count}
 
     def get_team_needs(self, team_name):
-        """Determine what positions a team still needs based on picks so far."""
-        picked_positions = defaultdict(int)
+        """Positions a team still needs: derived targets minus drafted counts."""
+        drafted = defaultdict(int)
         for pick in self.team_rosters.get(team_name, []):
-            # We don't have position from the pick directly, so count total picks
-            pass
+            if pick.get("position"):
+                drafted[pick["position"]] += 1
 
-        # Return generic needs based on pick count
-        total_picked = len(self.team_rosters.get(team_name, []))
         needs = {}
-        for pos, targets in ROSTER_TARGETS.items():
-            needs[pos] = max(0, targets["total"] - 0)  # simplified
+        for pos, target in self.targets.items():
+            remaining = round(target) - drafted.get(pos, 0)
+            if remaining > 0:
+                needs[pos] = remaining
         return needs
+
+    def get_budgets(self):
+        """Per-team auction budget state, sorted by remaining budget descending."""
+        budgets = []
+        for team in self.league.teams:
+            picks = self.team_rosters.get(team.team_name, [])
+            spent = sum(p["bid_amount"] for p in picks)
+            slots_left = max(0, self.roster_size - len(picks))
+            remaining = max(0, self.budget - spent)
+            budgets.append({
+                "team": team.team_name,
+                "spent": spent,
+                "remaining": remaining,
+                "slots_left": slots_left,
+                "max_bid": max(0, remaining - max(0, slots_left - 1)),
+            })
+        budgets.sort(key=lambda b: b["remaining"], reverse=True)
+        return budgets
+
+    def get_inflation(self):
+        """League-wide inflation multiplier for remaining pool values.
+
+        Remaining cash chasing the top remaining players: > 1.0 means prices
+        should run above baseline values, < 1.0 means bargains ahead.
+        """
+        if not self.pool:
+            return 1.0
+        budgets = self.get_budgets()
+        remaining_cash = sum(b["remaining"] for b in budgets)
+        remaining_slots = sum(b["slots_left"] for b in budgets)
+        if remaining_slots <= 0:
+            return 1.0
+
+        available = sorted(
+            (e for pid, e in self.pool.items() if pid not in self.drafted_ids),
+            key=lambda e: e.get("value", 1.0),
+            reverse=True,
+        )[:remaining_slots]
+        base = sum(max(1.0, e.get("value", 1.0)) for e in available)
+        return round(remaining_cash / base, 3) if base else 1.0
+
+    def get_available_ranked(self, limit=25, position=None):
+        """Best available players by inflation-adjusted value."""
+        inflation = self.get_inflation()
+        available = [
+            e for pid, e in self.pool.items()
+            if pid not in self.drafted_ids
+            and (position is None or e.get("position") == position)
+        ]
+        available.sort(key=lambda e: e.get("value", 0), reverse=True)
+        ranked = []
+        for e in available[:limit]:
+            ranked.append({
+                **e,
+                "adjusted_value": round(e.get("value", 1.0) * inflation, 1),
+            })
+        return ranked
 
     def get_board_summary(self):
         """Get a summary of the current draft board state."""

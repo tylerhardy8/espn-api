@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block title %}Trade Analysis - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-arrow-left-right text-success"></i> Trade Analysis</h2>
+    <form class="d-flex gap-2" method="GET">
+        <select name="team" class="form-select" style="width: 220px;" onchange="this.form.submit()">
+            <option value="">Select Team</option>
+            {% for t in teams %}
+            <option value="{{ t }}" {% if team_name and t.lower() == team_name.lower() %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+{# Positional Needs (if team selected) #}
+{% if needs %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-bullseye"></i> Your Positional Needs ({{ team_name }})</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Position</th>
+                        <th class="text-end" data-sort="num">Your Pts</th>
+                        <th class="text-end" data-sort="num">League Avg</th>
+                        <th class="text-end" data-sort="num">Deficit</th>
+                        <th class="text-center" data-sort="num">Depth</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for need in needs %}
+                    <tr {% if need.deficit > 0 %}class="table-danger"{% endif %}>
+                        <td><span class="pos-badge">{{ need.position }}</span></td>
+                        <td class="text-end">{{ "%.1f"|format(need.team_points) }}</td>
+                        <td class="text-end">{{ "%.1f"|format(need.league_avg) }}</td>
+                        <td class="text-end">
+                            {% if need.deficit > 0 %}
+                            <span class="text-danger">+{{ "%.1f"|format(need.deficit) }}</span>
+                            {% else %}
+                            <span class="text-success">{{ "%.1f"|format(need.deficit) }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">{{ need.depth }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Trade Suggestions (if team selected) #}
+{% if trade_suggestions %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-lightbulb"></i> Trade Suggestions</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            {% for s in trade_suggestions %}
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h6 class="card-title">Trade #{{ loop.index }}</h6>
+                        <p class="mb-1"><strong>Partner:</strong> {{ s.trade_partner }}</p>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="text-danger">
+                                    <small class="text-muted">Give</small><br>
+                                    <strong>{{ s.give_player }}</strong>
+                                    <br><small>{{ s.give_position }} &middot; {{ "%.1f"|format(s.give_points) }} pts</small>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-success">
+                                    <small class="text-muted">Receive</small><br>
+                                    <strong>{{ s.receive_player }}</strong>
+                                    <br><small>{{ s.receive_position }} &middot; {{ "%.1f"|format(s.receive_points) }} pts</small>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="mt-2 mb-0 text-muted"><small><i class="bi bi-info-circle"></i> {{ s.reason }}</small></p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# AI Trade Analysis Button #}
+{% if ai_available and team_name %}
+<div class="card mb-4">
+    <div class="card-body">
+        <form id="ai-trade-form">
+            <input type="hidden" name="team_name" value="{{ team_name }}">
+            <button type="submit" class="btn btn-info" id="ai-trade-btn">
+                <i class="bi bi-robot"></i> Get AI Trade Analysis
+            </button>
+            <span id="ai-trade-spinner" class="spinner-border spinner-border-sm ms-2 d-none" role="status"></span>
+        </form>
+        <div id="ai-trade-result"></div>
+    </div>
+</div>
+{% endif %}
+
+{# Roster Strength by Team #}
+{% if roster_strengths %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-people"></i> Roster Strength by Team</h5>
+    </div>
+    <div class="card-body">
+        <div class="accordion" id="rosterAccordion">
+            {% for name, data in roster_strengths.items() %}
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#roster-{{ loop.index }}">
+                        <span class="fw-bold me-2">{{ name }}</span>
+                        <span class="badge bg-secondary me-2">{{ data.record }}</span>
+                        <span class="text-muted">{{ data.points_for }} PF</span>
+                    </button>
+                </h2>
+                <div id="roster-{{ loop.index }}" class="accordion-collapse collapse"
+                     data-bs-parent="#rosterAccordion">
+                    <div class="accordion-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Pos</th>
+                                    <th>Starters</th>
+                                    <th class="text-end">Starter Pts</th>
+                                    <th class="text-center">Depth</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for pos in ["QB", "RB", "WR", "TE", "D/ST", "K"] %}
+                                {% if pos in data.strengths %}
+                                {% set s = data.strengths[pos] %}
+                                <tr>
+                                    <td class="fw-bold">{{ pos }}</td>
+                                    <td>{{ s.starters|map(attribute='name')|join(', ') }}</td>
+                                    <td class="text-end">{{ "%.1f"|format(s.starter_points) }}</td>
+                                    <td class="text-center">{{ s.depth }}</td>
+                                </tr>
+                                {% endif %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('ai-trade-form');
+    if (!form) return;
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const btn = document.getElementById('ai-trade-btn');
+        const spinner = document.getElementById('ai-trade-spinner');
+        const result = document.getElementById('ai-trade-result');
+
+        btn.disabled = true;
+        spinner.classList.remove('d-none');
+
+        try {
+            const formData = new FormData(form);
+            const resp = await fetch('{{ url_for("main.trades_ai") }}', {
+                method: 'POST',
+                body: formData,
+            });
+            result.innerHTML = await resp.text();
+        } catch (err) {
+            result.innerHTML = '<p class="text-danger mt-3">Failed to get AI analysis.</p>';
+        } finally {
+            btn.disabled = false;
+            spinner.classList.add('d-none');
+        }
+    });
+});
+</script>
+{% endblock %}

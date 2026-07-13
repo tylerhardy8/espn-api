@@ -8,6 +8,7 @@ Usage:
     python -m fantasy_football_analyzer waivers [--team "My Team"] [--week 5] [--ai]
     python -m fantasy_football_analyzer live-draft --team "My Team" [--interval 10]
     python -m fantasy_football_analyzer full [--team "My Team"] [--years 2020-2024]
+    python -m fantasy_football_analyzer web [--host 0.0.0.0] [--port 5000]
 """
 
 import argparse
@@ -225,6 +226,16 @@ def cmd_live_draft(args):
     advisor.run()
 
 
+def cmd_web(args):
+    """Start the web UI server."""
+    from .web import create_app
+
+    app = create_app()
+    print(f"Starting Fantasy Football Analyzer web UI...")
+    print(f"Open http://{args.host}:{args.port} in your browser")
+    app.run(host=args.host, port=args.port, debug=args.debug)
+
+
 def cmd_full(args):
     """Run full analysis (history + draft + trades + waivers)."""
     config, league_cfg = _get_league_or_exit(args)
@@ -312,6 +323,12 @@ Examples:
     live_parser.add_argument("--no-auto", action="store_true",
                              help="Disable automatic AI advice before your picks")
 
+    # web
+    web_parser = subparsers.add_parser("web", help="Start the web UI")
+    web_parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
+    web_parser.add_argument("--port", default=5000, type=int, help="Port to listen on (default: 5000)")
+    web_parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+
     # full
     full_parser = subparsers.add_parser("full", help="Run all analyses")
     full_parser.add_argument("--team", help="Your team name")
@@ -327,6 +344,7 @@ Examples:
         "trades": cmd_trades,
         "waivers": cmd_waivers,
         "live-draft": cmd_live_draft,
+        "web": cmd_web,
         "full": cmd_full,
     }
 

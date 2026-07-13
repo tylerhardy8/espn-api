@@ -39,6 +39,8 @@ class Player(object):
         self.injured = player.get('injured', False)
         self.percent_owned = round(player.get('ownership', {}).get('percentOwned', -1), 2)
         self.percent_started = round(player.get('ownership', {}).get('percentStarted', -1), 2)
+        self.avg_draft_position = round(player.get('ownership', {}).get('averageDraftPosition', -1), 2)
+        self.auction_value_avg = round(player.get('ownership', {}).get('auctionValueAverage', -1), 2)
 
         self.active_status = 'bye'
         player_stats = player.get('stats', [])
