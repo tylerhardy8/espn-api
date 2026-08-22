@@ -4,7 +4,10 @@ from datetime import datetime
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 
-from ..config import load_config, save_config, get_league_config
+from ..config import (
+    load_config, save_config, get_league_config,
+    add_league, remove_league, set_active_league,
+)
 from ..league_connector import connect_league, connect_multi_year
 from ..historical import (
     analyze_team_history, analyze_head_to_head, analyze_draft_history,
@@ -189,6 +192,29 @@ def setup():
     config = load_config()
 
     if request.method == "POST":
+        action = request.form.get("action", "save")
+
+        if action == "add":
+            return _setup_add_league(config)
+        if action == "remove":
+            config = remove_league(config, request.form.get("name", ""))
+            save_config(config)
+            clear_league_cache()
+            flash("League profile removed.", "info")
+            return redirect(url_for("main.setup"))
+        if action == "activate":
+            updated = set_active_league(config, request.form.get("name", ""))
+            if updated:
+                save_config(updated)
+                clear_league_cache()
+                flash(f"Switched to {updated['active']}.", "success")
+            return redirect(url_for("main.setup"))
+
+        # Default: save the active profile + account cookies
+        if not config.get("leagues"):
+            # First-time setup: create the initial profile from the form
+            return _setup_add_league(config, name=request.form.get("profile_name") or None)
+
         try:
             config["league_id"] = int(request.form["league_id"])
         except (ValueError, KeyError):
@@ -208,21 +234,66 @@ def setup():
 
         save_config(config)
         clear_league_cache()
-
-        # Test connection
-        try:
-            league_cfg = get_league_config(config)
-            league = connect_league(
-                league_cfg["league_id"], config["year"],
-                league_cfg.get("espn_s2"), league_cfg.get("swid"),
-            )
-            name = getattr(league.settings, "name", "League")
-            flash(f"Connected to {name} ({len(league.teams)} teams)", "success")
-            return redirect(url_for("main.dashboard"))
-        except Exception as e:
-            flash(f"Config saved, but connection failed: {e}", "warning")
+        return _test_connection_and_redirect(load_config())
 
     return render_template("setup.html", config=config, ai_available=ai_available())
+
+
+def _setup_add_league(config, name=None):
+    """Handle adding a league profile from the setup form."""
+    try:
+        league_id = int(request.form["league_id"])
+    except (ValueError, KeyError):
+        flash("League ID must be a number.", "danger")
+        return redirect(url_for("main.setup"))
+
+    name = name or request.form.get("name") or f"League {league_id}"
+    config = add_league(
+        config, name, league_id,
+        year=request.form.get("year") or config.get("year", 2025),
+        team_name=request.form.get("team_name", ""),
+        make_active=True,
+    )
+    # Cookies may come along with a first-time setup form
+    for key in ("espn_s2", "swid"):
+        value = request.form.get(key, "").strip()
+        if value:
+            config[key] = value
+
+    save_config(config)
+    clear_league_cache()
+    return _test_connection_and_redirect(load_config())
+
+
+def _test_connection_and_redirect(config):
+    """Try connecting to the active league; flash the result."""
+    try:
+        league_cfg = get_league_config(config)
+        league = connect_league(
+            league_cfg["league_id"], config["year"],
+            league_cfg.get("espn_s2"), league_cfg.get("swid"),
+        )
+        name = getattr(league.settings, "name", "League")
+        flash(f"Connected to {name} ({len(league.teams)} teams)", "success")
+        return redirect(url_for("main.dashboard"))
+    except Exception as e:
+        flash(f"Config saved, but connection failed: {e}", "warning")
+        return redirect(url_for("main.setup"))
+
+
+@bp.route("/league/switch", methods=["POST"])
+def switch_league():
+    """Navbar league switcher: activate a profile and return to the current page."""
+    config = load_config()
+    updated = set_active_league(config, request.form.get("name", ""))
+    if updated:
+        save_config(updated)
+        clear_league_cache()
+        flash(f"Switched to {updated['active']}.", "success")
+    else:
+        flash("Unknown league profile.", "danger")
+    target = request.form.get("next") or request.referrer or url_for("main.dashboard")
+    return redirect(target)
 
 
 # ---------------------------------------------------------------------------

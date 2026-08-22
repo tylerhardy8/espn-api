@@ -33,6 +33,18 @@ def parse_year_range(year_str):
 def _get_league_or_exit(args):
     """Load config and connect to league; exit on failure."""
     config = load_config(args.config)
+
+    # --league NAME selects a profile for this run without changing the saved default
+    league_name = getattr(args, "league", None)
+    if league_name:
+        from .config import set_active_league
+        switched = set_active_league(config, league_name)
+        if not switched:
+            names = ", ".join(l["name"] for l in config.get("leagues", [])) or "(none)"
+            print(f"Error: Unknown league profile '{league_name}'. Available: {names}")
+            sys.exit(1)
+        config = switched
+
     league_cfg = get_league_config(config)
 
     if not league_cfg["league_id"]:
@@ -281,6 +293,8 @@ Examples:
         """,
     )
     parser.add_argument("--config", default=None, help="Path to config file")
+    parser.add_argument("--league", default=None,
+                        help="League profile name to use for this run (see 'setup')")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 

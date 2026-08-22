@@ -12,4 +12,17 @@ def create_app():
     from .routes import bp
     app.register_blueprint(bp)
 
+    @app.context_processor
+    def inject_league_profiles():
+        """Expose league profiles to every template for the navbar switcher."""
+        from ..config import load_config
+        try:
+            config = load_config()
+        except Exception:
+            config = {}
+        return {
+            "league_profiles": config.get("leagues") or [],
+            "active_league": config.get("active"),
+        }
+
     return app

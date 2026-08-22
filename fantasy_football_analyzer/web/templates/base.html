@@ -18,6 +18,31 @@
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
+                {% if league_profiles %}
+                <div class="dropdown ms-lg-3 my-2 my-lg-0">
+                    <button class="btn btn-sm btn-outline-warning dropdown-toggle" type="button"
+                            data-bs-toggle="dropdown" aria-expanded="false" title="Switch league">
+                        <i class="bi bi-collection"></i> {{ active_league or "No league" }}
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-dark">
+                        {% for lp in league_profiles %}
+                        <li>
+                            <form method="POST" action="{{ url_for('main.switch_league') }}">
+                                <input type="hidden" name="name" value="{{ lp.name }}">
+                                <input type="hidden" name="next" value="{{ request.path }}">
+                                <button type="submit" class="dropdown-item {% if lp.name == active_league %}active{% endif %}">
+                                    {{ lp.name }}
+                                    <small class="text-muted ms-1">#{{ lp.league_id }} · {{ lp.year }}</small>
+                                </button>
+                            </form>
+                        </li>
+                        {% endfor %}
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="{{ url_for('main.setup') }}#leagues">
+                            <i class="bi bi-plus-circle"></i> Manage leagues</a></li>
+                    </ul>
+                </div>
+                {% endif %}
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}"
