@@ -179,7 +179,7 @@
                 <input class="form-check-input" type="checkbox" id="auto-ai" checked>
                 <label class="form-check-label small" for="auto-ai">Auto-advise</label>
             </div>
-            <div class="form-check form-switch mb-0" title="Let Claude search the web for same-day news on its targets (slower, a few extra cents per call)">
+            <div class="form-check form-switch mb-0" title="When you click Advise Now, Claude searches the web for same-day news on its targets (slower, a few extra cents). Auto-advice always skips search to stay fast.">
                 <input class="form-check-input" type="checkbox" id="web-search" checked>
                 <label class="form-check-label small" for="web-search"><i class="bi bi-globe"></i> Live news search</label>
             </div>
@@ -339,7 +339,7 @@ function updateUI(data) {
     if (summary.total_picks > lastPickCount && lastPickCount > 0 &&
         autoToggle && autoToggle.checked && MY_TEAM &&
         Date.now() - lastAiCall > AI_THROTTLE_MS) {
-        getAIRecommendation();
+        getAIRecommendation(true);  // auto calls skip web search (speed + quota)
     }
     lastPickCount = summary.total_picks;
 }
@@ -406,7 +406,7 @@ function stopPolling() {
     document.getElementById('stop-btn').classList.add('d-none');
 }
 
-async function getAIRecommendation() {
+async function getAIRecommendation(isAuto = false) {
     if (!MY_TEAM) {
         alert('Please select your team first.');
         return;
@@ -426,7 +426,9 @@ async function getAIRecommendation() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 team_name: MY_TEAM,
-                web_search: !!document.getElementById('web-search')?.checked,
+                // Auto-advice skips web search (faster, saves search quota);
+                // the manual "Advise Now" button honors the toggle.
+                web_search: !isAuto && !!document.getElementById('web-search')?.checked,
             }),
         });
         const data = await resp.json();

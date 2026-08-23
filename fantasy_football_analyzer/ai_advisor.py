@@ -362,13 +362,17 @@ BUDGET CHECK: [1 sentence on your spending pace vs. remaining needs]
 WATCH OUT: [1 sentence on a run, a cash-rich rival, or a tier about to vanish]"""
 
 
-WEB_SEARCH_MAX_USES = 3
+# Tool cap is higher than the prompted count so Claude never trips the limit
+# mid-thought (a max_uses_exceeded error block gets narrated into the advice).
+WEB_SEARCH_MAX_USES = 5
 WEB_SEARCH_PROMPT = """
 
 LIVE WEB SEARCH: You have a web search tool. Before finalizing, run up to 3 quick
 searches for the very latest news (injury, holdout, suspension, depth chart change,
 contract) on your top 2-3 targets — the draft data above can lag same-day news.
-Fold anything material into your advice and say in one short line what you checked."""
+Fold anything material into your advice and say in one short line what you checked.
+If a search errors or returns nothing, just continue with the data above — do not
+mention search problems in your advice."""
 
 
 def _web_search_tool(model):
