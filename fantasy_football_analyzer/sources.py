@@ -166,7 +166,9 @@ def fetch_fantasypros_rankings(year, scoring="PPR", api_key=None):
     def load():
         resp = requests.get(
             FANTASYPROS_RANKINGS_URL.format(year=year),
-            params={"position": "ALL", "type": "draft", "scoring": scoring},
+            # week=0 is required: without it the API serves a truncated
+            # free-tier response even for premium keys
+            params={"position": "ALL", "type": "draft", "scoring": scoring, "week": 0},
             headers={"x-api-key": api_key},
             timeout=REQUEST_TIMEOUT,
         )
