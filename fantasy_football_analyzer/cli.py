@@ -333,7 +333,7 @@ Examples:
     live_parser.add_argument("--interval", default="10",
                              help="Poll interval in seconds (default: 10)")
     live_parser.add_argument("--model", default=None,
-                             help="Claude model to use (default: claude-sonnet-4-6)")
+                             help="Claude model to use (default: claude-opus-5)")
     live_parser.add_argument("--no-auto", action="store_true",
                              help="Disable automatic AI advice before your picks")
 

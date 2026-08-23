@@ -19,8 +19,8 @@ except ImportError:
     HAS_ANTHROPIC = False
 
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
-MAX_TOKENS = 1024
+DEFAULT_MODEL = "claude-opus-5"
+MAX_TOKENS = 2048
 
 
 def _check_api_available():
