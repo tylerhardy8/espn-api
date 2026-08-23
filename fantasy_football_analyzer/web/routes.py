@@ -21,7 +21,7 @@ from ..rss_news import fetch_news, match_news_to_players
 
 from .helpers import (
     ai_available, get_league_or_redirect, clear_league_cache, parse_year_range,
-    get_valued_pool, get_league_intel,
+    get_valued_pool, get_league_intel, get_ai_key,
 )
 
 bp = Blueprint("main", __name__)
@@ -209,6 +209,16 @@ def setup():
                 clear_league_cache()
                 flash(f"Switched to {updated['active']}.", "success")
             return redirect(url_for("main.setup"))
+        if action == "save_ai_key":
+            key = request.form.get("ai_key", "").strip()
+            if key:
+                config["anthropic_api_key"] = key
+                flash("AI key saved. AI features are now enabled.", "success")
+            else:
+                config.pop("anthropic_api_key", None)
+                flash("AI key removed.", "info")
+            save_config(config)
+            return redirect(url_for("main.setup") + "#ai-setup")
 
         # Default: save the active profile + account cookies
         if not config.get("leagues"):
@@ -528,7 +538,8 @@ def trades_ai():
         else:
             prompt = "Analyze these rosters and suggest the most impactful trade."
 
-        advice = get_trade_evaluation_ai(prompt, "\n".join(context_lines))
+        advice = get_trade_evaluation_ai(prompt, "\n".join(context_lines),
+                                         api_key=get_ai_key(config))
         return render_template("partials/_ai_section.html", advice=advice, title="AI Trade Analysis")
     except Exception as e:
         return f"<p class='text-danger'>AI analysis error: {e}</p>"
@@ -612,7 +623,7 @@ def waivers_ai():
             "and any sleepers to target.\n\n" + report
         )
 
-        advice = get_waiver_advice_ai(prompt)
+        advice = get_waiver_advice_ai(prompt, api_key=get_ai_key(config))
         return render_template("partials/_ai_section.html", advice=advice, title="AI Waiver Analysis")
     except Exception as e:
         return f"<p class='text-danger'>AI analysis error: {e}</p>"
@@ -747,6 +758,7 @@ def api_draft_recommendation():
         intel_text = _get_intel_text(league, config, team_name)
         advice = get_ai_recommendation(
             state, team_name, league, intel_text=intel_text, web_search=web_search,
+            api_key=get_ai_key(config),
         )
         return jsonify({"recommendation": advice, "web_search": web_search})
     except Exception as e:

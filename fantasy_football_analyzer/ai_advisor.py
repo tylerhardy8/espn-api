@@ -23,19 +23,23 @@ DEFAULT_MODEL = "claude-opus-5"
 MAX_TOKENS = 2048
 
 
-def _check_api_available():
-    """Check that the anthropic package is installed and API key is set."""
+def _check_api_available(api_key=None):
+    """Check that the anthropic package is installed and an API key is available."""
     if not HAS_ANTHROPIC:
         raise RuntimeError(
             "The 'anthropic' package is required for AI recommendations.\n"
             "Install it with: pip install anthropic"
         )
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not api_key and not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError(
-            "ANTHROPIC_API_KEY environment variable is not set.\n"
-            "Get your API key from https://console.anthropic.com/ and set it:\n"
-            "  export ANTHROPIC_API_KEY='your-key-here'"
+            "No Anthropic API key configured.\n"
+            "Get your API key from https://console.anthropic.com/ and either paste it\n"
+            "on the Setup page (AI section) or set the ANTHROPIC_API_KEY environment variable."
         )
+
+
+def _make_client(api_key=None):
+    return anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
 
 def _league_settings_info(league, summary):
@@ -342,7 +346,7 @@ def _complete(client, model, system_prompt, user_prompt, web_search=False):
 
 
 def get_ai_recommendation(draft_state, my_team_name, league, model=None, intel_text=None,
-                          web_search=False):
+                          web_search=False, api_key=None):
     """Get an AI-powered draft recommendation from Claude.
 
     Sends the current draft context to Claude and returns a structured
@@ -351,10 +355,10 @@ def get_ai_recommendation(draft_state, my_team_name, league, model=None, intel_t
     `intel_text` optionally appends a league-history intelligence block;
     `web_search=True` lets Claude check live news on its targets.
     """
-    _check_api_available()
+    _check_api_available(api_key)
 
     model = model or DEFAULT_MODEL
-    client = anthropic.Anthropic()
+    client = _make_client(api_key)
 
     if getattr(draft_state, "is_auction", False) and getattr(draft_state, "pool", None):
         context = build_auction_context(draft_state, my_team_name, league)
@@ -401,9 +405,9 @@ WATCH OUT: [1 sentence about a position/player that's about to become scarce]"""
     return _complete(client, model, system_prompt, user_prompt, web_search=web_search)
 
 
-def get_trade_evaluation_ai(trade_description, league_context, model=None):
+def get_trade_evaluation_ai(trade_description, league_context, model=None, api_key=None):
     """Use Claude to evaluate a proposed trade with nuanced analysis."""
-    _check_api_available()
+    _check_api_available(api_key)
 
     model = model or DEFAULT_MODEL
 
@@ -416,7 +420,7 @@ def get_trade_evaluation_ai(trade_description, league_context, model=None):
 
 Be honest and direct. If a trade is lopsided, say so. Format your response clearly with a verdict."""
 
-    client = anthropic.Anthropic()
+    client = _make_client(api_key)
     message = client.messages.create(
         model=model,
         max_tokens=MAX_TOKENS,
@@ -427,9 +431,9 @@ Be honest and direct. If a trade is lopsided, say so. Format your response clear
     return message.content[0].text
 
 
-def get_waiver_advice_ai(waiver_context, model=None):
+def get_waiver_advice_ai(waiver_context, model=None, api_key=None):
     """Use Claude to provide waiver wire advice with strategic reasoning."""
-    _check_api_available()
+    _check_api_available(api_key)
 
     model = model or DEFAULT_MODEL
 
@@ -437,7 +441,7 @@ def get_waiver_advice_ai(waiver_context, model=None):
 waiver recommendations considering matchups, trends, usage changes, and rest-of-season outlook.
 Prioritize your recommendations and explain the reasoning briefly."""
 
-    client = anthropic.Anthropic()
+    client = _make_client(api_key)
     message = client.messages.create(
         model=model,
         max_tokens=MAX_TOKENS,

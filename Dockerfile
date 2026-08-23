@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -e .
 COPY . .
 
 # Install the analyzer's additional dependencies (anthropic is optional)
-RUN pip install --no-cache-dir flask anthropic feedparser pytest
+RUN pip install --no-cache-dir flask anthropic feedparser gunicorn pytest
 
 # Expose web UI port
 EXPOSE 5000

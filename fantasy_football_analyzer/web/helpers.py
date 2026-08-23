@@ -23,9 +23,16 @@ _INTEL_TTL = 12 * 3600  # seconds
 INTEL_SEASONS_BACK = 4
 
 
-def ai_available():
-    """Check if the Anthropic API key is configured."""
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+def get_ai_key(config=None):
+    """The Anthropic API key: per-instance config first, then environment."""
+    if config is None:
+        config = load_config()
+    return (config.get("anthropic_api_key") or "").strip() or os.environ.get("ANTHROPIC_API_KEY")
+
+
+def ai_available(config=None):
+    """Check if an Anthropic API key is configured (config or environment)."""
+    return bool(get_ai_key(config))
 
 
 def get_league_or_redirect(config=None):
