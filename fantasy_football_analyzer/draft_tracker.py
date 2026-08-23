@@ -176,6 +176,37 @@ class DraftState:
             })
         return ranked
 
+    def get_my_slot(self, team_name):
+        """(slot, total_slots) for a team in the draft order, or (None, total)."""
+        order = getattr(self.league.settings, "draft_pick_order", None) or []
+        if not order:
+            return None, self.total_teams
+        by_id = {t.team_id: t.team_name for t in self.league.teams}
+        for slot, team_id in enumerate(order, 1):
+            if by_id.get(team_id, "").lower() == team_name.lower():
+                return slot, len(order)
+        return None, len(order)
+
+    def get_upcoming_picks(self, team_name, count=4):
+        """The team's next overall pick numbers in a snake draft.
+
+        Starts after the last completed pick. Returns [] if the draft order
+        is unknown.
+        """
+        slot, total = self.get_my_slot(team_name)
+        if slot is None or total <= 0:
+            return []
+        picks = []
+        p = len(self.picks) + 1
+        while len(picks) < count and p <= total * 30:  # generous round cap
+            rnd = (p - 1) // total + 1
+            idx = (p - 1) % total
+            slot_at_p = idx + 1 if rnd % 2 == 1 else total - idx
+            if slot_at_p == slot:
+                picks.append(p)
+            p += 1
+        return picks
+
     def get_board_summary(self):
         """Get a summary of the current draft board state."""
         return {

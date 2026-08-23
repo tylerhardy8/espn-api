@@ -241,8 +241,12 @@ function deltaBadge(delta) {
 
 function updateUI(data) {
     const summary = data.summary;
-    document.getElementById('draft-progress').textContent =
-        `${summary.players_drafted} players sold · ${summary.players_available} available`;
+    let progress = `${summary.players_drafted} players ${data.is_auction ? 'sold' : 'drafted'} · ${summary.players_available} available`;
+    if (data.my_slot) {
+        const next = data.my_slot.upcoming.map(p => '#' + p).join(', ');
+        progress += ` · You draft ${data.my_slot.slot} of ${data.my_slot.total} — your picks: ${next}`;
+    }
+    document.getElementById('draft-progress').textContent = progress;
 
     // Recent sales
     const recentBody = document.getElementById('recent-picks');

@@ -700,6 +700,15 @@ def api_draft_state():
             "is_auction": state.is_auction,
         }
 
+        if team_name and not state.is_auction:
+            slot, total = state.get_my_slot(team_name)
+            if slot:
+                payload["my_slot"] = {
+                    "slot": slot,
+                    "total": total,
+                    "upcoming": state.get_upcoming_picks(team_name),
+                }
+
         if state.pool:
             payload["inflation"] = state.get_inflation()
             payload["budgets"] = state.get_budgets()

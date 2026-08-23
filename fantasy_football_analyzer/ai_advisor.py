@@ -87,22 +87,30 @@ def build_draft_context(draft_state, my_team_name, league, num_available=40):
 
     settings_info = _league_settings_info(league, summary)
 
-    # Build available players list grouped by position
-    available_by_pos = {}
-    for pid, name in list(draft_state.available_players.items())[:500]:
-        # Try to get position from player data on rosters
-        pos = _lookup_player_position(pid, league)
-        if pos:
-            available_by_pos.setdefault(pos, []).append(name)
-
+    # Best-available: rich (valued pool) when present, bare names otherwise
     available_text = []
-    for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
-        players = available_by_pos.get(pos, [])
-        if players:
-            shown = players[:num_available // 6]
-            available_text.append(f"  {pos}: {', '.join(shown)}")
-            if len(players) > len(shown):
-                available_text.append(f"       ... and {len(players) - len(shown)} more")
+    if getattr(draft_state, "pool", None):
+        available_text.append(
+            "  Format: Name T<tier> (proj <season pts>, ADP <avg draft position>) [flags]"
+        )
+        for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
+            top = draft_state.get_available_ranked(limit=6, position=pos)
+            if top:
+                parts = [_format_snake_entry(e) for e in top]
+                available_text.append(f"  {pos}: " + " | ".join(parts))
+    else:
+        available_by_pos = {}
+        for pid, name in list(draft_state.available_players.items())[:500]:
+            pos = _lookup_player_position(pid, league)
+            if pos:
+                available_by_pos.setdefault(pos, []).append(name)
+        for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
+            players = available_by_pos.get(pos, [])
+            if players:
+                shown = players[:num_available // 6]
+                available_text.append(f"  {pos}: {', '.join(shown)}")
+                if len(players) > len(shown):
+                    available_text.append(f"       ... and {len(players) - len(shown)} more")
 
     # Build the full context
     lines = [
@@ -113,6 +121,23 @@ def build_draft_context(draft_state, my_team_name, league, num_available=40):
         f"Players drafted: {summary['players_drafted']}",
         f"Players available: {summary['players_available']}",
     ]
+
+    # Draft position: where I pick, and how far away my turns are
+    slot, total_slots = draft_state.get_my_slot(my_team_name)
+    if slot is not None:
+        upcoming = draft_state.get_upcoming_picks(my_team_name)
+        next_overall = len(draft_state.picks) + 1
+        lines.append("\n--- MY DRAFT POSITION ---")
+        lines.append(f"  I draft from slot {slot} of {total_slots} (snake order).")
+        if upcoming:
+            away = upcoming[0] - next_overall
+            lines.append(
+                f"  My upcoming picks: {', '.join('#' + str(p) for p in upcoming)} — "
+                f"next one is {away} pick(s) away (current pick on the clock: #{next_overall})."
+            )
+            lines.append(
+                "  Judge who survives to my picks by comparing player ADP to those pick numbers."
+            )
 
     if recent:
         lines.append("\n--- RECENT PICKS ---")
@@ -142,7 +167,36 @@ def build_draft_context(draft_state, my_team_name, league, num_available=40):
         lines.append("\n--- TOP AVAILABLE PLAYERS BY POSITION ---")
         lines.extend(available_text)
 
+    if getattr(draft_state, "pool", None):
+        top_available = draft_state.get_available_ranked(limit=30)
+        news_lines = _player_news_lines(top_available)
+        if news_lines:
+            lines.append("\n--- PLAYER NEWS (recent headlines for available players) ---")
+            lines.extend(news_lines)
+        lines.append("\n--- DATA SOURCES IN THIS CONTEXT ---")
+        lines.append("  " + _sources_summary())
+
     return "\n".join(lines)
+
+
+def _format_snake_entry(e):
+    """'Name T2 (proj 285, ADP 14) [Q hamstring, ECR#12]' for snake contexts."""
+    flags = []
+    injury = (e.get("injury_status") or "").upper()
+    if injury and injury not in ("ACTIVE", "NORMAL", ""):
+        part = e.get("injury_body_part")
+        flags.append(f"{injury}{' ' + part if part else ''}")
+    if e.get("practice"):
+        flags.append(f"practice {e['practice']}")
+    if e.get("depth_chart"):
+        flags.append(e["depth_chart"])
+    if e.get("fp_ecr"):
+        flags.append(f"ECR#{e['fp_ecr']}")
+    adp = e.get("adp")
+    adp_txt = f", ADP {adp:.0f}" if adp and adp > 0 else ""
+    flag_txt = f" [{', '.join(flags)}]" if flags else ""
+    return (f"{e['name']} T{e.get('tier', '?')} "
+            f"(proj {e.get('projected_points', 0):.0f}{adp_txt}){flag_txt}")
 
 
 def _lookup_player_position(player_id, league):
@@ -383,7 +437,10 @@ Your recommendations should consider:
 2. POSITIONAL SCARCITY: Which positions are drying up fastest? Is there a run on RBs or WRs?
 3. TEAM NEEDS: What does this team's roster look like? What positions are filled vs. empty?
 4. LEAGUE SETTINGS: PPR vs Standard scoring changes player values (WRs/pass-catching RBs more valuable in PPR).
-5. DRAFT POSITION: How many picks until this team picks again? Will target players survive to the next pick?
+5. DRAFT POSITION: Use the MY DRAFT POSITION section — compare each target's ADP to my upcoming
+   pick numbers. If a target's ADP is well before my next pick, take them now or move on; if their
+   ADP is after my next pick, they will likely survive and I can wait. At a snake turn (back-to-back
+   picks), plan both picks together.
 6. AVOID: Don't recommend kickers or defenses in early rounds. Don't reach for a position of surplus.
 
 Format your response as:

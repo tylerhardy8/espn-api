@@ -24,6 +24,8 @@ class BaseSettings(object):
         self.acquisition_budget = data.get('acquisitionSettings', {}).get('acquisitionBudget', 0)
         self.draft_type = data.get('draftSettings', {}).get('type', '')
         self.auction_budget = data.get('draftSettings', {}).get('auctionBudget', 0)
+        self.draft_pick_order = data.get('draftSettings', {}).get('pickOrder', [])
+        self.time_per_selection = data.get('draftSettings', {}).get('timePerSelection', 0)
         divisions = data.get('scheduleSettings', {}).get('divisions', [])
         for division in divisions: self.division_map[division.get('id', 0)] = division.get('name')
 
