@@ -175,6 +175,62 @@
             </div>
         </div>
 
+        {# Data Sources #}
+        {% set src = sources|default({}) %}
+        <div class="card mt-4" id="data-sources">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-database"></i> Draft Data Sources</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm mb-3">
+                    <tbody>
+                        <tr>
+                            <td class="fw-bold">ESPN</td>
+                            <td>Projections (your league's scoring), crowd auction values, ADP, draft feed</td>
+                            <td class="text-end"><span class="badge bg-success">Always on</span></td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">Sleeper</td>
+                            <td>Injury status, practice reports, depth charts, trending adds (free, no key)</td>
+                            <td class="text-end">
+                                {% if src.get('sleeper') %}<span class="badge bg-success">Loaded</span>
+                                {% else %}<span class="badge bg-secondary">Auto — loads with the draft board</span>{% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">FantasyPros</td>
+                            <td>Expert Consensus Rankings &amp; tiers, blended into dollar values</td>
+                            <td class="text-end">
+                                {% if src.get('fantasypros') %}<span class="badge bg-success">Loaded ({{ src.get('fp_matched', 0) }} matched)</span>
+                                {% elif src.get('fantasypros_key_set') %}<span class="badge bg-info">Key set — loads with the draft board</span>
+                                {% else %}<span class="badge bg-secondary">Not configured</span>{% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">Player news</td>
+                            <td>Rotowire, FantasyPros, NBC Sports RSS — matched to available players</td>
+                            <td class="text-end"><span class="badge bg-success">Always on</span></td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">Live web search</td>
+                            <td>Claude checks same-day news on its targets (toggle on the Live Draft page)</td>
+                            <td class="text-end">
+                                {% if ai_available %}<span class="badge bg-success">Available</span>
+                                {% else %}<span class="badge bg-secondary">Needs AI key</span>{% endif %}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                {% if not src.get('fantasypros_key_set') %}
+                <p class="text-muted mb-0">
+                    <small><i class="bi bi-info-circle"></i> To enable FantasyPros, get a free API key at
+                    <a href="https://www.fantasypros.com/apis/" target="_blank" rel="noopener">fantasypros.com/apis</a>
+                    and set <code>FANTASYPROS_API_KEY</code> (add it to <code>.env</code> for Docker).</small>
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
         {# AI Configuration #}
         <div class="card mt-4" id="ai-setup">
             <div class="card-header">

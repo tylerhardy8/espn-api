@@ -139,19 +139,25 @@ def calculate_auction_values(pool, budget, num_teams, targets):
         entry.setdefault("value", 1.0)
         entry.setdefault("pos_rank", 0)
 
-    # Blending with ESPN values breaks the cash-sum invariant (their scale may
-    # assume a different budget). Rescale so the rosterable pool's total value
-    # equals total league cash, keeping the $1 floor — inflation then starts
-    # at ~1.0 and stays meaningful.
+    normalize_values(pool, budget, num_teams, roster_size)
+    return pool
+
+
+def normalize_values(pool, budget, num_teams, roster_size):
+    """Rescale `value` so the rosterable pool's total equals total league cash.
+
+    Blending in external dollar scales (ESPN crowd values, expert values)
+    breaks the cash-sum invariant. Rescaling keeps the $1 floor and makes
+    inflation start at ~1.0 and stay meaningful. Mutates entries in place.
+    """
     top_n = num_teams * roster_size
-    ranked = sorted(pool.values(), key=lambda e: e["value"], reverse=True)
-    current = sum(e["value"] for e in ranked[:top_n])
+    ranked = sorted(pool.values(), key=lambda e: e.get("value", 1.0), reverse=True)
+    current = sum(e.get("value", 1.0) for e in ranked[:top_n])
     target = num_teams * budget
     if current > top_n:
         scale = (target - top_n) / (current - top_n)
         for entry in pool.values():
-            entry["value"] = round(1 + max(0.0, entry["value"] - 1) * scale, 1)
-
+            entry["value"] = round(1 + max(0.0, entry.get("value", 1.0) - 1) * scale, 1)
     return pool
 
 
@@ -189,8 +195,8 @@ def detect_tiers(pool, max_per_position=40):
     return pool
 
 
-def build_valued_pool(league, budget=None, size=400):
-    """One-call helper: pool + values + tiers.
+def build_valued_pool(league, budget=None, size=400, enrich=True):
+    """One-call helper: pool + values + external enrichment + tiers.
 
     Returns (pool, budget, targets, roster_size).
     """
@@ -198,5 +204,11 @@ def build_valued_pool(league, budget=None, size=400):
     budget = budget or getattr(league.settings, "auction_budget", 0) or DEFAULT_BUDGET
     pool = build_draft_pool(league, size=size)
     calculate_auction_values(pool, budget, len(league.teams), targets)
+    if enrich:
+        try:
+            from .sources import enrich_pool
+            enrich_pool(pool, league, budget, len(league.teams), roster_size)
+        except Exception:
+            pass  # external sources are best-effort
     detect_tiers(pool)
     return pool, budget, targets, roster_size

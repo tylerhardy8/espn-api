@@ -207,17 +207,82 @@ def build_auction_context(draft_state, my_team_name, league):
         lines.append(f"\n!! POSITION RUN: {run['count']} of the last 5 sales were {run['position']}s")
 
     lines.append("\n--- BEST AVAILABLE (inflation-adjusted values) ---")
+    lines.append("  Format: Name T<tier> $<adj value> [flags]. Flags: injury/practice status, "
+                 "depth chart slot, ECR#<FantasyPros expert consensus rank>, trending adds")
+    top_available = []
     for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"]:
         top = draft_state.get_available_ranked(limit=6, position=pos)
         if not top:
             continue
-        parts = [
-            f"{e['name']} T{e.get('tier', '?')} ${e['adjusted_value']:.0f}"
-            for e in top
-        ]
+        top_available.extend(top)
+        parts = [_format_available_entry(e) for e in top]
         lines.append(f"  {pos}: " + " | ".join(parts))
 
+    # Recent player news matched to the best available players
+    news_lines = _player_news_lines(top_available)
+    if news_lines:
+        lines.append("\n--- PLAYER NEWS (recent headlines for available players) ---")
+        lines.extend(news_lines)
+
+    lines.append("\n--- DATA SOURCES IN THIS CONTEXT ---")
+    lines.append("  " + _sources_summary())
+
     return "\n".join(lines)
+
+
+def _format_available_entry(e):
+    """'Name T2 $34 [Q hamstring, RB1, ECR#14]'"""
+    flags = []
+    injury = (e.get("injury_status") or "").upper()
+    if injury and injury not in ("ACTIVE", "NORMAL", ""):
+        part = e.get("injury_body_part")
+        flags.append(f"{injury}{' ' + part if part else ''}")
+    if e.get("practice"):
+        flags.append(f"practice {e['practice']}")
+    if e.get("depth_chart"):
+        flags.append(e["depth_chart"])
+    if e.get("fp_ecr"):
+        flags.append(f"ECR#{e['fp_ecr']}")
+    if e.get("trending_adds"):
+        flags.append(f"trending +{e['trending_adds']}")
+    flag_txt = f" [{', '.join(flags)}]" if flags else ""
+    return f"{e['name']} T{e.get('tier', '?')} ${e['adjusted_value']:.0f}{flag_txt}"
+
+
+def _player_news_lines(entries, max_lines=15):
+    """Match recent RSS headlines to the given players; returns formatted lines."""
+    try:
+        from .rss_news import fetch_news, match_news_to_players
+        news = fetch_news(max_items=60)
+        if not news:
+            return []
+        names = [e["name"] for e in entries if e.get("position") != "D/ST"]
+        matches = match_news_to_players(news, names)
+    except Exception:
+        return []
+
+    out = []
+    for name, items in matches.items():
+        for item in items[:2]:
+            out.append(f"  - {name}: {item.get('title', '')} ({item.get('source', '')})")
+            if len(out) >= max_lines:
+                return out
+    return out
+
+
+def _sources_summary():
+    try:
+        from .sources import get_sources_status
+        s = get_sources_status()
+    except Exception:
+        s = {}
+    parts = ["ESPN projections (league scoring) + ESPN crowd auction values"]
+    if s.get("sleeper"):
+        parts.append(f"Sleeper injuries/practice/depth charts ({s.get('trending', 0)} trending adds)")
+    if s.get("fantasypros"):
+        parts.append(f"FantasyPros ECR ({s.get('fp_matched', 0)} players matched, blended into $ values)")
+    parts.append("RSS player news (Rotowire, FantasyPros, NBC)")
+    return "; ".join(parts)
 
 
 AUCTION_SYSTEM_PROMPT = """You are an expert fantasy football AUCTION draft advisor. You analyze budgets,
@@ -239,36 +304,68 @@ BUDGET CHECK: [1 sentence on your spending pace vs. remaining needs]
 WATCH OUT: [1 sentence on a run, a cash-rich rival, or a tier about to vanish]"""
 
 
-def get_ai_recommendation(draft_state, my_team_name, league, model=None, intel_text=None):
+WEB_SEARCH_MAX_USES = 3
+WEB_SEARCH_PROMPT = """
+
+LIVE WEB SEARCH: You have a web search tool. Before finalizing, run up to 3 quick
+searches for the very latest news (injury, holdout, suspension, depth chart change,
+contract) on your top 2-3 targets — the draft data above can lag same-day news.
+Fold anything material into your advice and say in one short line what you checked."""
+
+
+def _web_search_tool(model):
+    """Pick the web search tool variant the model supports."""
+    modern = any(tag in model for tag in ("4-6", "4-7", "4-8", "sonnet-5", "opus-5", "fable-5"))
+    return {
+        "type": "web_search_20260209" if modern else "web_search_20250305",
+        "name": "web_search",
+        "max_uses": WEB_SEARCH_MAX_USES,
+    }
+
+
+def _complete(client, model, system_prompt, user_prompt, web_search=False):
+    """Run one advice request; with web search, continue through pause_turn stops."""
+    messages = [{"role": "user", "content": user_prompt}]
+    kwargs = dict(model=model, max_tokens=MAX_TOKENS, system=system_prompt)
+    if web_search:
+        kwargs["tools"] = [_web_search_tool(model)]
+
+    text_parts = []
+    for _ in range(4):  # initial call + up to 3 pause_turn continuations
+        message = client.messages.create(messages=messages, **kwargs)
+        text_parts.extend(block.text for block in message.content if block.type == "text")
+        if message.stop_reason != "pause_turn":
+            break
+        messages.append({"role": "assistant", "content": message.content})
+
+    return "\n".join(t for t in text_parts if t).strip()
+
+
+def get_ai_recommendation(draft_state, my_team_name, league, model=None, intel_text=None,
+                          web_search=False):
     """Get an AI-powered draft recommendation from Claude.
 
     Sends the current draft context to Claude and returns a structured
     recommendation with reasoning. Auction drafts (detected from league
     settings or observed bids) get auction-specific context and strategy.
-    `intel_text` optionally appends a league-history intelligence block
-    (manager tendencies, spending patterns, champion profiles).
+    `intel_text` optionally appends a league-history intelligence block;
+    `web_search=True` lets Claude check live news on its targets.
     """
     _check_api_available()
 
     model = model or DEFAULT_MODEL
+    client = anthropic.Anthropic()
 
     if getattr(draft_state, "is_auction", False) and getattr(draft_state, "pool", None):
         context = build_auction_context(draft_state, my_team_name, league)
         if intel_text:
             context += "\n\n" + intel_text
-        system_prompt = AUCTION_SYSTEM_PROMPT
+        system_prompt = AUCTION_SYSTEM_PROMPT + (WEB_SEARCH_PROMPT if web_search else "")
         user_prompt = (
             f"Here is the current auction draft state. I am managing '{my_team_name}'. "
             f"Advise me on my next moves.\n\n{context}"
         )
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model=model,
-            max_tokens=MAX_TOKENS,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        return message.content[0].text
+        return _complete(client, model, system_prompt, user_prompt, web_search=web_search)
 
     context = build_draft_context(draft_state, my_team_name, league)
     if intel_text:
@@ -299,15 +396,9 @@ WATCH OUT: [1 sentence about a position/player that's about to become scarce]"""
         f"It's about to be my pick. Who should I draft next?\n\n{context}"
     )
 
-    client = anthropic.Anthropic()
-    message = client.messages.create(
-        model=model,
-        max_tokens=MAX_TOKENS,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-
-    return message.content[0].text
+    if web_search:
+        system_prompt += WEB_SEARCH_PROMPT
+    return _complete(client, model, system_prompt, user_prompt, web_search=web_search)
 
 
 def get_trade_evaluation_ai(trade_description, league_context, model=None):

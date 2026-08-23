@@ -80,6 +80,7 @@
                 </div>
             </div>
             <div class="card-body p-0">
+                <div class="px-3 py-1 small text-muted border-bottom" id="sources-line">Sources: ESPN</div>
                 <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
                     <table class="table table-hover mb-0">
                         <thead>
@@ -177,6 +178,10 @@
             <div class="form-check form-switch mb-0">
                 <input class="form-check-input" type="checkbox" id="auto-ai" checked>
                 <label class="form-check-label small" for="auto-ai">Auto-advise</label>
+            </div>
+            <div class="form-check form-switch mb-0" title="Let Claude search the web for same-day news on its targets (slower, a few extra cents per call)">
+                <input class="form-check-input" type="checkbox" id="web-search" checked>
+                <label class="form-check-label small" for="web-search"><i class="bi bi-globe"></i> Live news search</label>
             </div>
             <button class="btn btn-sm btn-info" id="ai-btn" onclick="getAIRecommendation()">
                 <i class="bi bi-robot"></i> Advise Now
@@ -309,6 +314,12 @@ function updateUI(data) {
         lastBestAvailable = data.best_available || [];
         renderBestAvailable();
 
+        const src = data.sources || {};
+        const srcParts = ['ESPN'];
+        if (src.sleeper) srcParts.push('Sleeper injuries/depth');
+        if (src.fantasypros) srcParts.push(`FantasyPros ECR (${src.fp_matched} matched)`);
+        document.getElementById('sources-line').textContent = 'Sources: ' + srcParts.join(' · ');
+
         const runAlert = document.getElementById('run-alert');
         if (data.active_run) {
             document.getElementById('run-alert-text').textContent =
@@ -329,6 +340,19 @@ function updateUI(data) {
     lastPickCount = summary.total_picks;
 }
 
+function playerFlags(e) {
+    const flags = [];
+    const inj = (e.injury_status || '').toUpperCase();
+    if (inj && inj !== 'ACTIVE' && inj !== 'NORMAL') {
+        const cls = (inj === 'OUT' || inj === 'IR' || inj === 'PUP' || inj === 'SUSPENSION') ? 'bg-danger' : 'bg-warning text-dark';
+        flags.push(`<span class="badge ${cls} bg-opacity-75 ms-1" title="Injury status">${inj}</span>`);
+    }
+    if (e.practice) flags.push(`<small class="text-warning ms-1" title="Practice participation">${e.practice}</small>`);
+    if (e.depth_chart) flags.push(`<small class="text-muted ms-1" title="Depth chart">${e.depth_chart}</small>`);
+    if (e.trending_adds) flags.push(`<small class="text-info ms-1" title="Sleeper adds last 24h"><i class="bi bi-fire"></i>${e.trending_adds}</small>`);
+    return flags.join('');
+}
+
 function renderBestAvailable() {
     const rows = lastBestAvailable
         .filter(e => !currentPosFilter || e.position === currentPosFilter)
@@ -336,8 +360,10 @@ function renderBestAvailable() {
         .map(e => `<tr>
             <td class="fw-bold">${e.name}
                 <span class="pos-badge ms-1">${e.position}</span>
-                <small class="text-muted">${e.team}</small></td>
-            <td class="text-center"><span class="badge bg-secondary bg-opacity-75">T${e.tier}</span></td>
+                <small class="text-muted">${e.team}</small>
+                ${playerFlags(e)}</td>
+            <td class="text-center"><span class="badge bg-secondary bg-opacity-75">T${e.tier}</span>
+                ${e.fp_ecr ? `<br><small class="text-muted" title="FantasyPros expert consensus rank">ECR #${e.fp_ecr}</small>` : ''}</td>
             <td class="text-end">$${e.value.toFixed(0)}</td>
             <td class="text-end text-muted">${e.espn_value ? '$' + e.espn_value.toFixed(0) : '—'}</td>
             <td class="text-end fw-bold text-info">$${e.adjusted_value.toFixed(0)}</td>
@@ -394,7 +420,10 @@ async function getAIRecommendation() {
         const resp = await fetch('{{ url_for("main.api_draft_recommendation") }}', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({team_name: MY_TEAM}),
+            body: JSON.stringify({
+                team_name: MY_TEAM,
+                web_search: !!document.getElementById('web-search')?.checked,
+            }),
         });
         const data = await resp.json();
         if (data.error) {

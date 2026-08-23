@@ -236,7 +236,18 @@ def setup():
         clear_league_cache()
         return _test_connection_and_redirect(load_config())
 
-    return render_template("setup.html", config=config, ai_available=ai_available())
+    return render_template(
+        "setup.html", config=config, ai_available=ai_available(),
+        sources=_sources_status(),
+    )
+
+
+def _sources_status():
+    try:
+        from ..sources import get_sources_status
+        return get_sources_status()
+    except Exception:
+        return {}
 
 
 def _setup_add_league(config, name=None):
@@ -691,12 +702,23 @@ def api_draft_state():
                     "espn_value": e.get("espn_value"),
                     "adjusted_value": e["adjusted_value"],
                     "projected_points": e.get("projected_points", 0),
+                    "injury_status": e.get("injury_status", ""),
+                    "practice": e.get("practice", ""),
+                    "depth_chart": e.get("depth_chart", ""),
+                    "fp_ecr": e.get("fp_ecr"),
+                    "fp_tier": e.get("fp_tier"),
+                    "trending_adds": e.get("trending_adds", 0),
                 }
                 for e in state.get_available_ranked(limit=40)
             ]
             payload["active_run"] = state.active_run
             if team_name:
                 payload["my_needs"] = state.get_team_needs(team_name)
+            try:
+                from ..sources import get_sources_status
+                payload["sources"] = get_sources_status()
+            except Exception:
+                pass
 
         return jsonify(payload)
     except Exception as e:
@@ -712,17 +734,21 @@ def api_draft_recommendation():
     if err:
         return jsonify({"error": "Could not connect to league"}), 500
 
-    team_name = request.json.get("team_name") if request.is_json else request.form.get("team_name")
+    payload = request.get_json(silent=True) or {}
+    team_name = payload.get("team_name") or request.form.get("team_name")
     if not team_name:
         return jsonify({"error": "No team name provided"}), 400
+    web_search = bool(payload.get("web_search", False))
 
     try:
         from ..ai_advisor import get_ai_recommendation
 
         state = _build_draft_state(league, config)
         intel_text = _get_intel_text(league, config, team_name)
-        advice = get_ai_recommendation(state, team_name, league, intel_text=intel_text)
-        return jsonify({"recommendation": advice})
+        advice = get_ai_recommendation(
+            state, team_name, league, intel_text=intel_text, web_search=web_search,
+        )
+        return jsonify({"recommendation": advice, "web_search": web_search})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
