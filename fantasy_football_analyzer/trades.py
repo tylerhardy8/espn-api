@@ -258,7 +258,13 @@ def find_trade_matches(my_team, league, max_partners=6, max_proposals_per_partne
             reverse=True,
         )[:UNTOUCHABLE_COUNT]
     }
-    my_depth = _bench_locked(mine)[:4]
+    # Package pieces: bench-locked depth, but never from a weak position —
+    # draining a thin spot's insurance for an upgrade elsewhere is how you
+    # lose in November.
+    my_depth = [
+        p for p in _bench_locked(mine)
+        if my_deficits.get(p["position"], 0) <= WEAK_DEFICIT
+    ][:4]
 
     partners = []
     for other in league.teams:
@@ -274,14 +280,24 @@ def find_trade_matches(my_team, league, max_partners=6, max_proposals_per_partne
         proposals = []
 
         def consider(give_list, get):
-            # Strategy gates: don't buy where I'm already clearly strong, and
-            # don't sell starters from a position I'm weak at (bench-locked
-            # depth in 2-for-1s is exempt — it isn't in my lineup anyway).
-            if my_deficits.get(get["position"], 0) < -STRONG_SURPLUS:
+            # Strategy gates: don't buy where I'm already clearly strong —
+            # by league-average deficit OR by my starter already carrying
+            # healthy value over replacement (a good QB stays a good QB even
+            # in a league where two teams hoard elite ones).
+            get_pos = get["position"]
+            if my_deficits.get(get_pos, 0) < -STRONG_SURPLUS:
+                return
+            my_best_at = max(
+                (p["value"] for p in mine if p["position"] == get_pos), default=0,
+            )
+            if my_best_at - replacement.get(get_pos, 0) >= 20:
                 return
             give_ids = {g["player_id"] for g in give_list}
             my_net = _swap_net(mine, my_base, give_ids, [get])
-            if my_net < MIN_MY_GAIN:
+            # Efficiency floor: moving bigger assets must return bigger gains —
+            # nobody trades a 250-pt player to improve their lineup by 6.
+            required = max(MIN_MY_GAIN, 0.10 * sum(g["value"] for g in give_list))
+            if my_net < required:
                 return
             their_net = _swap_net(theirs, their_base, {get["player_id"]}, give_list)
             if their_net < MIN_THEIR_GAIN:
