@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "FFA Draft Tracker",
+  "version": "1.0",
+  "description": "Relays ESPN live draft picks to your Fantasy Football Analyzer",
+  "host_permissions": [
+    "http://localhost:5050/*",
+    "http://127.0.0.1:5050/*"
+  ],
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "FFA Draft Tracker (badge = picks relayed)"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://fantasy.espn.com/*", "https://lm.fantasy.espn.com/*"],
+      "js": ["ws-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://fantasy.espn.com/*", "https://lm.fantasy.espn.com/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

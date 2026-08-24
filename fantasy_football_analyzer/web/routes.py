@@ -655,21 +655,56 @@ def live_draft():
 _manual_drafted = {}
 
 
-@bp.route("/api/mark-drafted", methods=["POST"])
+@bp.after_request
+def _api_cors(response):
+    # The Chrome extension's service worker posts picks here
+    if request.path.startswith("/api/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
+
+@bp.route("/api/mark-drafted", methods=["POST", "OPTIONS"])
 def api_mark_drafted():
+    if request.method == "OPTIONS":
+        return ("", 204)
     config, league, err = get_league_or_redirect()
     if err:
         return jsonify({"error": "Could not connect to league"}), 500
     payload = request.get_json(silent=True) or {}
     pid = payload.get("player_id")
+
+    try:
+        pool, *_ = get_valued_pool(league, config)
+    except Exception:
+        pool = {}
+
+    # Name-based marking (e.g. picks scraped from the draft room page)
+    if not isinstance(pid, int) and payload.get("name"):
+        try:
+            from ..sources import normalize_name
+            wanted = normalize_name(payload["name"])
+            pid = next(
+                (p for p, e in pool.items() if normalize_name(e["name"]) == wanted),
+                None,
+            )
+        except Exception:
+            pid = None
+        if pid is None:
+            return jsonify({"error": f"no pool match for {payload['name']!r}"}), 404
+
     if not isinstance(pid, int):
-        return jsonify({"error": "player_id required"}), 400
+        return jsonify({"error": "player_id or name required"}), 400
+    if pool and pid not in pool:
+        # Liberal candidate mining (extension) sends stray ints; reject them
+        return jsonify({"error": f"player_id {pid} not in draft pool"}), 404
     marked = _manual_drafted.setdefault(league.league_id, set())
     if payload.get("undo"):
         marked.discard(pid)
     else:
         marked.add(pid)
-    return jsonify({"marked": len(marked)})
+    return jsonify({"marked": len(marked), "player_id": pid})
 
 
 def _apply_manual_picks(state, league, pool):
