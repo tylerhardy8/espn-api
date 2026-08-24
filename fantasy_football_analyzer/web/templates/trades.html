@@ -87,8 +87,9 @@
                                     <span class="text-danger">{{ g }}</span><span class="pos-badge mx-1">{{ s.give_positions[loop.index0] }}</span>{% if not loop.last %}<span class="text-muted">+</span>{% endif %}
                                     {% endfor %}
                                     <i class="bi bi-arrow-left-right text-muted mx-1"></i>
-                                    <span class="text-success">{{ s.receive_player }}</span>
-                                    <span class="pos-badge ms-1">{{ s.receive_position }}</span>
+                                    {% for g in s.receive_players %}
+                                    <span class="text-success">{{ g }}</span><span class="pos-badge ms-1">{{ s.receive_positions[loop.index0] }}</span>{% if not loop.last %}<span class="text-muted">+</span>{% endif %}
+                                    {% endfor %}
                                 </div>
                                 <div class="text-end text-nowrap">
                                     <span class="badge bg-success bg-opacity-75" title="Your starting lineup's net change">you +{{ s.my_net }}</span>

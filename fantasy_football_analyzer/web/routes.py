@@ -495,7 +495,11 @@ def trades():
             except Exception:
                 needs = []
             try:
-                trade_matches = find_trade_matches(my_team, league)
+                pool = get_valued_pool(league, config)[0]
+            except Exception:
+                pool = {}
+            try:
+                trade_matches = find_trade_matches(my_team, league, pool=pool)
             except Exception:
                 trade_matches = []
 
@@ -547,7 +551,11 @@ def trades_ai():
                 None,
             )
             if my_team is not None:
-                matches = find_trade_matches(my_team, league)
+                try:
+                    ai_pool = get_valued_pool(league, config)[0]
+                except Exception:
+                    ai_pool = {}
+                matches = find_trade_matches(my_team, league, pool=ai_pool)
                 if matches:
                     context_lines.append(
                         "\nCOMPUTED TRADE MATCHES (both starting lineups improve "
@@ -560,10 +568,11 @@ def trades_ai():
                         )
                         for s in m["proposals"]:
                             gives = " + ".join(s["give_players"])
+                            gets = " + ".join(s["receive_players"])
                             context_lines.append(
-                                f"    {gives} for {s['receive_player']} "
-                                f"({s['receive_position']}) — my lineup {s['my_net']:+.1f}, "
-                                f"their lineup {s['their_net']:+.1f}"
+                                f"    {gives} for {gets} — my roster {s['my_net']:+.1f}, "
+                                f"theirs {s['their_net']:+.1f}, market ratio "
+                                f"{s['market_ratio']:.2f}"
                             )
 
         if team_name:
