@@ -657,6 +657,14 @@ def _build_draft_state(league, config):
     except Exception:
         pool, budget, targets, roster_size = {}, None, None, None
 
+    # The cached league object's picks are from connect time (up to 60s old);
+    # a live draft needs them fresh on every poll.
+    try:
+        league.draft = []
+        league.refresh_draft()
+    except Exception:
+        pass
+
     state = DraftState(
         league, pool=pool, budget=budget, targets=targets, roster_size=roster_size,
     )
