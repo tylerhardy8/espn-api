@@ -6,7 +6,7 @@
   if (window.__ffaHooked) return;
   window.__ffaHooked = true;
 
-  const seen = new Set();
+  const seen = new Map();  // playerId -> teamId|null (re-relay when team appears)
   const MAX_IDS_PER_FRAME = 30;
 
   // Only mine frames that look like completed selections. Queue edits also
@@ -17,12 +17,20 @@
     return /select|pick|draft/i.test(data);
   }
 
-  function collectIds(value, out) {
+  function collectPicks(value, out) {
     if (value == null || out.size >= MAX_IDS_PER_FRAME) return;
     if (typeof value === "object") {
+      let playerId = null;
+      let teamId = null;
       for (const [k, v] of Object.entries(value)) {
-        if (/playerid/i.test(k) && Number.isInteger(v) && v > 0) out.add(v);
-        else collectIds(v, out);
+        if (/playerid/i.test(k) && Number.isInteger(v) && v > 0) playerId = v;
+        else if (/^teamid$/i.test(k) && Number.isInteger(v) && v > 0) teamId = v;
+      }
+      if (playerId) {
+        out.set(playerId, teamId);  // teamId sits beside playerId in pick objects
+      }
+      for (const v of Object.values(value)) {
+        if (typeof v === "object") collectPicks(v, out);
       }
     }
   }
@@ -30,20 +38,22 @@
   function mine(data) {
     if (typeof data !== "string" || data.length > 200000) return;
     if (!isPickFrame(data)) return;
-    const out = new Set();
+    const out = new Map();  // playerId -> teamId|null
     if (data[0] === "{" || data[0] === "[") {
-      try { collectIds(JSON.parse(data), out); } catch (e) { /* not JSON */ }
+      try { collectPicks(JSON.parse(data), out); } catch (e) { /* not JSON */ }
     }
     if (out.size === 0) {
-      // Token frames: "SELECTED 7 3117251 ..." — plausible id ints
+      // Token frames: "SELECTED 7 3117251 ..." — plausible id ints, team unknown
       for (const m of (data.match(/\b\d{4,8}\b/g) || []).slice(0, MAX_IDS_PER_FRAME)) {
-        out.add(parseInt(m, 10));
+        out.set(parseInt(m, 10), null);
       }
     }
-    const fresh = [...out].filter((id) => !seen.has(id));
+    const fresh = [...out.entries()]
+      .filter(([id, teamId]) => !seen.has(id) || (teamId && seen.get(id) === null))
+      .map(([id, teamId]) => ({ playerId: id, teamId }));
     if (fresh.length) {
-      fresh.forEach((id) => seen.add(id));
-      window.postMessage({ source: "ffa-draft-tracker", ids: fresh }, "*");
+      fresh.forEach((p) => seen.set(p.playerId, p.teamId));
+      window.postMessage({ source: "ffa-draft-tracker", picks: fresh }, "*");
     }
   }
 

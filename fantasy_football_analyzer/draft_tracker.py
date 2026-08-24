@@ -55,42 +55,55 @@ class DraftState:
         return self.pool.get(player_id, {})
 
     def apply_picks(self, draft_picks):
-        """Apply a list of BasePick objects to the draft state.
+        """Apply the league's cumulative draft list (ESPN's full feed).
 
-        Only processes picks not yet tracked.
+        Only processes picks beyond what's already tracked. For picks from
+        non-cumulative sources (manual marks, reconstruction), use add_picks.
         """
         new_picks = draft_picks[len(self.picks):]
         for pick in new_picks:
-            entry = self._pool_entry(pick.playerId)
-            expected = entry.get("value")
-            bid = pick.bid_amount or 0
-            pick_data = {
-                "round": pick.round_num,
-                "round_pick": pick.round_pick,
-                "overall": (pick.round_num - 1) * self.total_teams + pick.round_pick,
-                "player_name": pick.playerName,
-                "player_id": pick.playerId,
-                "position": entry.get("position", ""),
-                "team_name": pick.team.team_name if pick.team else "Unknown",
-                "team_id": pick.team.team_id if pick.team else 0,
-                "bid_amount": bid,
-                "expected_value": expected,
-                "value_delta": round(expected - bid, 1) if expected is not None else None,
-                "keeper": pick.keeper_status,
-                "timestamp": datetime.now().isoformat(),
-            }
-            self.picks.append(pick_data)
-            self.drafted_ids.add(pick.playerId)
-            self.available_players.pop(pick.playerId, None)
-            self.team_rosters[pick_data["team_name"]].append(pick_data)
-            self.round = pick.round_num
-            self.pick_number = pick_data["overall"]
+            self._ingest(pick)
+        self._after_ingest()
+        return new_picks
 
+    def add_picks(self, picks):
+        """Append picks from a non-cumulative source, skipping known players."""
+        added = [p for p in picks if p.playerId not in self.drafted_ids]
+        for pick in added:
+            self._ingest(pick)
+        self._after_ingest()
+        return added
+
+    def _ingest(self, pick):
+        entry = self._pool_entry(pick.playerId)
+        expected = entry.get("value")
+        bid = pick.bid_amount or 0
+        pick_data = {
+            "round": pick.round_num,
+            "round_pick": pick.round_pick,
+            "overall": (pick.round_num - 1) * self.total_teams + pick.round_pick,
+            "player_name": pick.playerName,
+            "player_id": pick.playerId,
+            "position": entry.get("position", ""),
+            "team_name": pick.team.team_name if pick.team else "Unknown",
+            "team_id": pick.team.team_id if pick.team else 0,
+            "bid_amount": bid,
+            "expected_value": expected,
+            "value_delta": round(expected - bid, 1) if expected is not None else None,
+            "keeper": pick.keeper_status,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self.picks.append(pick_data)
+        self.drafted_ids.add(pick.playerId)
+        self.available_players.pop(pick.playerId, None)
+        self.team_rosters[pick_data["team_name"]].append(pick_data)
+        self.round = pick.round_num
+        self.pick_number = pick_data["overall"]
+
+    def _after_ingest(self):
         if any(p["bid_amount"] for p in self.picks):
             self.is_auction = True
-
         self._detect_position_runs()
-        return new_picks
 
     def _detect_position_runs(self, window=5, threshold=3):
         """Flag a positional run when >= threshold of the last `window` picks share a position."""
@@ -267,6 +280,8 @@ def synthesize_picks_from_pool(league, pool):
         agents = league.free_agents(size=600)
     except Exception:
         return []
+    if not agents:
+        return []  # empty FA response is an API hiccup, not a fully-drafted pool
     available_ids = {p.playerId for p in agents}
     gone = [pid for pid in pool if pid not in available_ids]
     if not gone:

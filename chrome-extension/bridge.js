@@ -7,8 +7,8 @@
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (event.source !== window || !msg || msg.source !== "ffa-draft-tracker") return;
-    if (Array.isArray(msg.ids) && msg.ids.length) {
-      chrome.runtime.sendMessage({ ids: msg.ids });
+    if (Array.isArray(msg.picks) && msg.picks.length) {
+      chrome.runtime.sendMessage({ picks: msg.picks });
     }
   });
 

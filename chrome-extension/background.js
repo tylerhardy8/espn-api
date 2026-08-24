@@ -39,11 +39,14 @@ async function post(body) {
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
-  for (const id of msg.ids || []) {
-    const key = `id:${id}`;
+  for (const pick of msg.picks || []) {
+    // Re-post when the team becomes known for an already-posted player
+    const key = pick.teamId ? `idt:${pick.playerId}` : `id:${pick.playerId}`;
     if (!posted.has(key)) {
       posted.add(key);
-      post({ player_id: id });
+      const body = { player_id: pick.playerId };
+      if (pick.teamId) body.team_id = pick.teamId;
+      post(body);
     }
   }
   for (const name of msg.names || []) {
