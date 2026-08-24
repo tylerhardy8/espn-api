@@ -10,6 +10,9 @@
     if (Array.isArray(msg.picks) && msg.picks.length) {
       chrome.runtime.sendMessage({ picks: msg.picks });
     }
+    if (msg.sample) {
+      chrome.runtime.sendMessage({ sample: msg.sample });
+    }
   });
 
   // Name shaped like "Ja'Marr Chase", "Kenneth Walker III", "A.J. Brown"

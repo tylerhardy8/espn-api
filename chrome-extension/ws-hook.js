@@ -8,6 +8,7 @@
 
   const seen = new Map();  // playerId -> teamId|null (re-relay when team appears)
   const MAX_IDS_PER_FRAME = 500;  // catch-up snapshots carry a whole draft
+  let samplesSent = 0;  // debug: relay a few raw pick frames for inspection
   const EXCLUDE = /queue|watchlist|ranking/i;
 
   // Queue edits also carry playerIds — marking your own queue as drafted
@@ -45,15 +46,24 @@
     const out = new Map();  // playerId -> teamId|null
     if (data[0] === "{" || data[0] === "[") {
       if (!/playerid/i.test(data)) return;  // cheap pre-filter
+      if (samplesSent < 6) {
+        samplesSent += 1;
+        window.postMessage({ source: "ffa-draft-tracker", sample: data.slice(0, 4000) }, "*");
+      }
       try { collectPicks(JSON.parse(data), out); } catch (e) { /* not JSON */ }
-    } else if (/select|pick|draft/i.test(data) && !EXCLUDE.test(data)) {
-      // Token frames: "SELECTED 7 3117251 ..." — plausible id ints, team unknown
-      for (const m of (data.match(/\b\d{4,8}\b/g) || []).slice(0, 50)) {
-        out.set(parseInt(m, 10), null);
+    } else {
+      // ESPN's draft room speaks a token protocol:
+      //   "SELECTED <teamId> <playerId> <n> {memberSwid}"  (playerId < 0 = D/ST)
+      //   "SELECTING <teamId> <clockMs>" and similar are ignored.
+      const m = data.match(/^\s*(?:AUTO)?SELECTED\s+(\d+)\s+(-?\d+)\b/i);
+      if (m) {
+        const teamId = parseInt(m[1], 10);
+        const playerId = parseInt(m[2], 10);
+        if (playerId !== 0) out.set(playerId, teamId);
       }
     }
     const fresh = [...out.entries()]
-      .filter(([id, teamId]) => !seen.has(id) || (teamId && seen.get(id) === null))
+      .filter(([id, teamId]) => !seen.has(id) || (teamId != null && seen.get(id) == null))
       .map(([id, teamId]) => ({ playerId: id, teamId }));
     if (fresh.length) {
       fresh.forEach((p) => seen.set(p.playerId, p.teamId));

@@ -56,4 +56,11 @@ chrome.runtime.onMessage.addListener((msg) => {
       post({ name });
     }
   }
+  if (msg.sample) {
+    appUrl().then((base) => fetch(`${base}/api/debug-frame`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sample: msg.sample }),
+    }).catch(() => {}));
+  }
 });
