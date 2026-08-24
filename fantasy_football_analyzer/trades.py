@@ -161,8 +161,10 @@ LINEUP_SLOTS = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "D/ST": 1, "K": 1}
 FLEX_POSITIONS = ("RB", "WR", "TE")
 FLEX_COUNT = 1
 MIN_MY_GAIN = 5.0      # a trade must improve my starting lineup by this much
-MIN_THEIR_GAIN = 3.0   # ...and theirs too, or they'd never accept
-UNTOUCHABLE_COUNT = 2  # never offer my top-N value players — nobody trades those
+MIN_THEIR_GAIN = 8.0   # ...and meaningfully improve theirs, or they'd never accept
+UNTOUCHABLE_COUNT = 2  # never offer my top-N VORP players — nobody trades those
+STRONG_SURPLUS = 15.0  # deficit below -this = position of strength: don't buy there
+WEAK_DEFICIT = 15.0    # deficit above this = position of weakness: don't sell from it
 
 
 def _team_players(team):
@@ -240,6 +242,7 @@ def find_trade_matches(my_team, league, max_partners=6, max_proposals_per_partne
     My top players by value-over-replacement are never offered.
     """
     replacement = _replacement_levels(league)
+    my_deficits = {n["position"]: n["deficit"] for n in identify_team_needs(my_team, league)}
 
     mine = _team_players(my_team)
     my_base = lineup_value(mine)
@@ -271,6 +274,11 @@ def find_trade_matches(my_team, league, max_partners=6, max_proposals_per_partne
         proposals = []
 
         def consider(give_list, get):
+            # Strategy gates: don't buy where I'm already clearly strong, and
+            # don't sell starters from a position I'm weak at (bench-locked
+            # depth in 2-for-1s is exempt — it isn't in my lineup anyway).
+            if my_deficits.get(get["position"], 0) < -STRONG_SURPLUS:
+                return
             give_ids = {g["player_id"] for g in give_list}
             my_net = _swap_net(mine, my_base, give_ids, [get])
             if my_net < MIN_MY_GAIN:
@@ -298,6 +306,8 @@ def find_trade_matches(my_team, league, max_partners=6, max_proposals_per_partne
         for give in my_core:
             if give["player_id"] in untouchable_ids:
                 continue
+            if my_deficits.get(give["position"], 0) > WEAK_DEFICIT:
+                continue  # don't sell from a position of weakness
             for get in their_core:
                 if get["position"] == give["position"]:
                     continue  # lateral same-position swaps rarely help both
