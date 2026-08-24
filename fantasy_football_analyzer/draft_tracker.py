@@ -235,6 +235,83 @@ class DraftState:
         )
 
 
+class _SyntheticPick:
+    """Mimics BasePick for picks reconstructed from the free-agent pool."""
+
+    def __init__(self, team, player_id, player_name, round_num, round_pick):
+        self.team = team
+        self.playerId = player_id
+        self.playerName = player_name
+        self.round_num = round_num
+        self.round_pick = round_pick
+        self.bid_amount = 0
+        self.keeper_status = False
+        self.nominatingTeam = None
+
+
+_synth_cache = {}  # league_id -> (frozenset(gone_ids), picks)
+
+
+def synthesize_picks_from_pool(league, pool):
+    """Reconstruct draft picks when ESPN's draft feed lags a live draft.
+
+    Players who have left the free-agent pool are drafted; a player-card
+    batch lookup recovers which team took each one (onTeamId). Pick order
+    is approximated by ADP (true order isn't available), so round/pick
+    numbers are estimates but the drafted set and total count are exact.
+    """
+    if not pool:
+        return []
+
+    try:
+        agents = league.free_agents(size=600)
+    except Exception:
+        return []
+    available_ids = {p.playerId for p in agents}
+    gone = [pid for pid in pool if pid not in available_ids]
+    if not gone:
+        return []
+
+    cache_key = getattr(league, "league_id", 0)
+    cached = _synth_cache.get(cache_key)
+    if cached and cached[0] == frozenset(gone):
+        return cached[1]
+
+    # Who has them: batch player cards for onTeamId
+    on_team = {}
+    for i in range(0, len(gone), 50):
+        try:
+            fetched = league.player_info(playerId=gone[i:i + 50]) or []
+        except Exception:
+            continue
+        if not isinstance(fetched, list):
+            fetched = [fetched]
+        for player in fetched:
+            on_team[player.playerId] = getattr(player, "onTeamId", 0)
+
+    teams_by_id = {t.team_id: t for t in league.teams}
+    num_teams = max(1, len(league.teams))
+
+    # Approximate draft order by ADP (unknown order otherwise)
+    def adp_key(pid):
+        adp = pool[pid].get("adp") or 0
+        return adp if adp > 0 else 9999
+
+    picks = []
+    for idx, pid in enumerate(sorted(gone, key=adp_key)):
+        team = teams_by_id.get(on_team.get(pid, 0))
+        picks.append(_SyntheticPick(
+            team,
+            pid,
+            pool[pid]["name"],
+            idx // num_teams + 1,
+            idx % num_teams + 1,
+        ))
+
+    _synth_cache[cache_key] = (frozenset(gone), picks)
+    return picks
+
+
 class DraftTracker:
     """Polls ESPN API and tracks a live draft in real time."""
 

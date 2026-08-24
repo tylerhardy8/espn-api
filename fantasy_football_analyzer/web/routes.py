@@ -650,6 +650,46 @@ def live_draft():
     )
 
 
+# Manual drafted-player marks: ESPN's REST API freezes during live drafts,
+# so the user can mark picks by hand. In-memory per league (draft-night scope).
+_manual_drafted = {}
+
+
+@bp.route("/api/mark-drafted", methods=["POST"])
+def api_mark_drafted():
+    config, league, err = get_league_or_redirect()
+    if err:
+        return jsonify({"error": "Could not connect to league"}), 500
+    payload = request.get_json(silent=True) or {}
+    pid = payload.get("player_id")
+    if not isinstance(pid, int):
+        return jsonify({"error": "player_id required"}), 400
+    marked = _manual_drafted.setdefault(league.league_id, set())
+    if payload.get("undo"):
+        marked.discard(pid)
+    else:
+        marked.add(pid)
+    return jsonify({"marked": len(marked)})
+
+
+def _apply_manual_picks(state, league, pool):
+    """Fold manually-marked drafted players into the draft state."""
+    marked = _manual_drafted.get(league.league_id) or set()
+    new = [pid for pid in marked if pid not in state.drafted_ids and pid in pool]
+    if not new:
+        return
+    from ..draft_tracker import _SyntheticPick
+    base = len(state.picks)
+    num_teams = max(1, len(league.teams))
+    picks = [
+        _SyntheticPick(None, pid, pool[pid]["name"],
+                       (base + i) // num_teams + 1, (base + i) % num_teams + 1)
+        for i, pid in enumerate(sorted(new, key=lambda p: pool[p].get("adp") or 9999))
+    ]
+    state.apply_picks(picks)
+    state.synthetic_picks = True
+
+
 def _build_draft_state(league, config):
     """Construct a DraftState with the valued auction pool when available."""
     try:
@@ -670,6 +710,17 @@ def _build_draft_state(league, config):
     )
     if league.draft:
         state.apply_picks(league.draft)
+    elif pool:
+        # ESPN's draft feed can lag a live draft badly; reconstruct picks
+        # from the free-agent pool (exact drafted set, approximate order)
+        from ..draft_tracker import synthesize_picks_from_pool
+        synthetic = synthesize_picks_from_pool(league, pool)
+        if synthetic:
+            state.apply_picks(synthetic)
+            state.synthetic_picks = True
+
+    if pool:
+        _apply_manual_picks(state, league, pool)
     return state
 
 
@@ -706,6 +757,7 @@ def api_draft_state():
             "recent": recent,
             "team_picks": team_picks,
             "is_auction": state.is_auction,
+            "synthetic": getattr(state, "synthetic_picks", False),
         }
 
         if team_name and not state.is_auction:
@@ -722,6 +774,7 @@ def api_draft_state():
             payload["budgets"] = state.get_budgets()
             payload["best_available"] = [
                 {
+                    "player_id": e["player_id"],
                     "name": e["name"],
                     "position": e["position"],
                     "team": e["team"],
@@ -737,7 +790,7 @@ def api_draft_state():
                     "fp_tier": e.get("fp_tier"),
                     "trending_adds": e.get("trending_adds", 0),
                 }
-                for e in state.get_available_ranked(limit=40)
+                for e in state.get_available_ranked(limit=60)
             ]
             payload["active_run"] = state.active_run
             if team_name:
