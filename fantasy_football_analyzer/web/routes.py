@@ -549,17 +549,21 @@ def trades_ai():
             if my_team is not None:
                 matches = find_trade_matches(my_team, league)
                 if matches:
-                    context_lines.append("\nCOMPUTED TRADE MATCHES (mutual-need fits):")
+                    context_lines.append(
+                        "\nCOMPUTED TRADE MATCHES (both starting lineups improve "
+                        "net of what leaves them — these are realistic asks):"
+                    )
                     for m in matches:
                         context_lines.append(
                             f"  {m['partner']} (fit {m['fit_score']}): "
                             f"needs {', '.join(m['their_needs']) or '-'}"
                         )
                         for s in m["proposals"]:
+                            gives = " + ".join(s["give_players"])
                             context_lines.append(
-                                f"    {s['give_player']} ({s['give_position']}) for "
-                                f"{s['receive_player']} ({s['receive_position']}) — "
-                                f"lineup {s['lineup_upgrade']:+.1f}, value {s['value_delta']:+.1f}"
+                                f"    {gives} for {s['receive_player']} "
+                                f"({s['receive_position']}) — my lineup {s['my_net']:+.1f}, "
+                                f"their lineup {s['their_net']:+.1f}"
                             )
 
         if team_name:

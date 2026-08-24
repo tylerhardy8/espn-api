@@ -83,18 +83,16 @@
                         <div class="border rounded p-2 mb-2">
                             <div class="d-flex justify-content-between align-items-center">
                                 <div>
-                                    <span class="text-danger">{{ s.give_player }}</span>
-                                    <span class="pos-badge mx-1">{{ s.give_position }}</span>
+                                    {% for g in s.give_players %}
+                                    <span class="text-danger">{{ g }}</span><span class="pos-badge mx-1">{{ s.give_positions[loop.index0] }}</span>{% if not loop.last %}<span class="text-muted">+</span>{% endif %}
+                                    {% endfor %}
                                     <i class="bi bi-arrow-left-right text-muted mx-1"></i>
                                     <span class="text-success">{{ s.receive_player }}</span>
                                     <span class="pos-badge ms-1">{{ s.receive_position }}</span>
                                 </div>
                                 <div class="text-end text-nowrap">
-                                    {% if s.lineup_upgrade > 0 %}
-                                    <span class="badge bg-success bg-opacity-75" title="Projected starter upgrade">+{{ s.lineup_upgrade }} lineup</span>
-                                    {% endif %}
-                                    <span class="badge {% if s.value_delta >= 0 %}bg-secondary{% else %}bg-warning text-dark{% endif %} bg-opacity-75"
-                                          title="Value received minus value given">{{ '%+0.1f'|format(s.value_delta) }} val</span>
+                                    <span class="badge bg-success bg-opacity-75" title="Your starting lineup's net change">you +{{ s.my_net }}</span>
+                                    <span class="badge bg-info bg-opacity-75" title="Their starting lineup's net change (why they'd accept)">them +{{ s.their_net }}</span>
                                 </div>
                             </div>
                             <small class="text-muted">{{ s.reason }}</small>

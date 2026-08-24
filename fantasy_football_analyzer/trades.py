@@ -157,104 +157,178 @@ def evaluate_trade(team_a, players_give, team_b, players_receive):
 
 
 TRADE_CORE_POSITIONS = ("QB", "RB", "WR", "TE")
-FAIRNESS_BAND = 0.30  # proposals within +/-30% of value are plausibly acceptable
+LINEUP_SLOTS = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "D/ST": 1, "K": 1}
+FLEX_POSITIONS = ("RB", "WR", "TE")
+FLEX_COUNT = 1
+MIN_MY_GAIN = 5.0      # a trade must improve my starting lineup by this much
+MIN_THEIR_GAIN = 3.0   # ...and theirs too, or they'd never accept
+UNTOUCHABLE_COUNT = 2  # never offer my top-N value players — nobody trades those
 
 
-def _tradeable_players(strength, pos):
-    """Players a team could realistically move at a position: bench pieces,
-    plus the second starter when they're two-deep at a two-starter spot."""
-    data = strength.get(pos, {})
-    candidates = list(data.get("bench", []))
-    starters = data.get("starters", [])
-    if len(starters) >= 2 and data.get("depth", 0) >= 3:
-        candidates.append(starters[-1])
-    return sorted(candidates, key=lambda p: p["value"], reverse=True)
+def _team_players(team):
+    return [
+        {"name": p.name, "player_id": p.playerId, "position": p.position,
+         "value": round(_player_value(p), 1)}
+        for p in team.roster
+    ]
+
+
+def lineup_value(players):
+    """Total value of the optimal starting lineup (fixed slots + flex)."""
+    by_pos = defaultdict(list)
+    for p in players:
+        by_pos[p["position"]].append(p["value"])
+    total = 0.0
+    flex_pool = []
+    for pos, values in by_pos.items():
+        values.sort(reverse=True)
+        n = LINEUP_SLOTS.get(pos, 0)
+        total += sum(values[:n])
+        if pos in FLEX_POSITIONS:
+            flex_pool.extend(values[n:])
+    flex_pool.sort(reverse=True)
+    total += sum(flex_pool[:FLEX_COUNT])
+    return total
+
+
+def _swap_net(players, base_value, give_ids, get_players):
+    """Change in optimal-lineup value after sending give_ids for get_players."""
+    after = [p for p in players if p["player_id"] not in give_ids] + list(get_players)
+    return lineup_value(after) - base_value
+
+
+def _bench_locked(players):
+    """Players contributing nothing to the optimal lineup (droppable depth)."""
+    base = lineup_value(players)
+    locked = []
+    for p in players:
+        if p["position"] not in TRADE_CORE_POSITIONS:
+            continue
+        without = [q for q in players if q["player_id"] != p["player_id"]]
+        if lineup_value(without) >= base - 0.01:  # removing them costs nothing
+            locked.append(p)
+    return sorted(locked, key=lambda p: p["value"], reverse=True)
+
+
+def _replacement_levels(league):
+    """Per-position replacement value: what the Nth-ranked league-wide player
+    scores, where N = starting slots (+ flex share) across all teams. Trade
+    value is points over THIS, not raw points — a 287-pt QB is worth far less
+    than a 281-pt RB when waiver QBs score 250 and waiver RBs score 150."""
+    pools = defaultdict(list)
+    for t in league.teams:
+        for p in t.roster:
+            if p.position in TRADE_CORE_POSITIONS:
+                pools[p.position].append(_player_value(p))
+    flex_share = {"RB": 0.5, "WR": 0.4, "TE": 0.1}
+    n = len(league.teams)
+    repl = {}
+    for pos, vals in pools.items():
+        vals.sort(reverse=True)
+        idx = max(1, int(n * (LINEUP_SLOTS.get(pos, 1) + flex_share.get(pos, 0))))
+        repl[pos] = vals[idx - 1] if idx <= len(vals) else vals[-1]
+    return repl
 
 
 def find_trade_matches(my_team, league, max_partners=6, max_proposals_per_partner=3):
-    """Scan every opposing roster for mutually beneficial trades.
+    """Scan every opposing roster for trades BOTH sides would actually accept.
 
-    For each opponent, finds complementary need/surplus pairs (they're weak
-    where I'm deep, and strong where I'm weak), proposes value-balanced
-    player swaps, and estimates how much each swap upgrades my starting
-    lineup. Returns partners sorted by fit.
+    A proposal survives only if each team's optimal starting lineup improves
+    (net of what leaves it): I convert depth into a starter upgrade, and so
+    do they. Includes 2-for-1 consolidations — sending two depth pieces for
+    one starter — which is how a depth-rich team realistically upgrades.
+    My top players by value-over-replacement are never offered.
     """
-    my_needs = {n["position"]: n for n in identify_team_needs(my_team, league)}
-    my_strength = evaluate_roster_strength(my_team)
+    replacement = _replacement_levels(league)
+
+    mine = _team_players(my_team)
+    my_base = lineup_value(mine)
+    my_core = sorted(
+        (p for p in mine if p["position"] in TRADE_CORE_POSITIONS),
+        key=lambda p: p["value"], reverse=True,
+    )[:8]
+    untouchable_ids = {
+        p["player_id"]
+        for p in sorted(
+            my_core,
+            key=lambda p: p["value"] - replacement.get(p["position"], 0),
+            reverse=True,
+        )[:UNTOUCHABLE_COUNT]
+    }
+    my_depth = _bench_locked(mine)[:4]
 
     partners = []
     for other in league.teams:
         if other.team_id == my_team.team_id:
             continue
-        other_needs = {n["position"]: n for n in identify_team_needs(other, league)}
-        other_strength = evaluate_roster_strength(other)
+        theirs = _team_players(other)
+        their_base = lineup_value(theirs)
+        their_core = sorted(
+            (p for p in theirs if p["position"] in TRADE_CORE_POSITIONS),
+            key=lambda p: p["value"], reverse=True,
+        )[:8]
 
         proposals = []
-        fit_score = 0.0
-        for get_pos in TRADE_CORE_POSITIONS:      # position I want back
-            if my_needs.get(get_pos, {}).get("deficit", 0) <= 0:
+
+        def consider(give_list, get):
+            give_ids = {g["player_id"] for g in give_list}
+            my_net = _swap_net(mine, my_base, give_ids, [get])
+            if my_net < MIN_MY_GAIN:
+                return
+            their_net = _swap_net(theirs, their_base, {get["player_id"]}, give_list)
+            if their_net < MIN_THEIR_GAIN:
+                return
+            proposals.append({
+                "give_players": [g["name"] for g in give_list],
+                "give_positions": [g["position"] for g in give_list],
+                "give_points": round(sum(g["value"] for g in give_list), 1),
+                "receive_player": get["name"],
+                "receive_position": get["position"],
+                "receive_points": get["value"],
+                "my_net": round(my_net, 1),
+                "their_net": round(their_net, 1),
+                "give_total_value": round(sum(g["value"] for g in give_list), 1),
+                "reason": (
+                    f"Both starting lineups improve: you {my_net:+.0f}, "
+                    f"they {their_net:+.0f}"
+                ),
+            })
+
+        # 1-for-1: my non-untouchable core pieces for any of theirs
+        for give in my_core:
+            if give["player_id"] in untouchable_ids:
                 continue
-            for give_pos in TRADE_CORE_POSITIONS:  # position I'd send away
-                if give_pos == get_pos:
-                    continue
-                if other_needs.get(give_pos, {}).get("deficit", 0) <= 0:
-                    continue  # they don't need what I'd send
+            for get in their_core:
+                if get["position"] == give["position"]:
+                    continue  # lateral same-position swaps rarely help both
+                consider([give], get)
 
-                gives = _tradeable_players(my_strength, give_pos)
-                gets = _tradeable_players(other_strength, get_pos)
-                if not gives or not gets:
-                    continue
-
-                fit_score += (my_needs[get_pos]["deficit"]
-                              + other_needs[give_pos]["deficit"])
-
-                # Best value-balanced pairing within the fairness band
-                for give in gives[:2]:
-                    for get in gets[:2]:
-                        if give["value"] <= 0 or get["value"] <= 0:
-                            continue
-                        imbalance = (get["value"] - give["value"]) / max(give["value"], 1)
-                        if abs(imbalance) > FAIRNESS_BAND:
-                            continue
-                        # Upgrade: does the incoming player beat my worst starter there?
-                        my_starters = my_strength.get(get_pos, {}).get("starters", [])
-                        floor = my_starters[-1]["value"] if my_starters else 0
-                        upgrade = round(get["value"] - floor, 1)
-                        proposals.append({
-                            "give_player": give["name"],
-                            "give_position": give_pos,
-                            "give_points": give["value"],
-                            "receive_player": get["name"],
-                            "receive_position": get_pos,
-                            "receive_points": get["value"],
-                            "value_delta": round(get["value"] - give["value"], 1),
-                            "lineup_upgrade": upgrade,
-                            "reason": (
-                                f"They're thin at {give_pos} "
-                                f"(-{other_needs[give_pos]['deficit']:.0f} vs league avg); "
-                                f"you're thin at {get_pos} "
-                                f"(-{my_needs[get_pos]['deficit']:.0f})"
-                            ),
-                        })
+        # 2-for-1: two of my bench-locked depth pieces for one of their starters
+        for i in range(len(my_depth)):
+            for j in range(i + 1, len(my_depth)):
+                pair = [my_depth[i], my_depth[j]]
+                for get in their_core:
+                    consider(pair, get)
 
         if not proposals:
             continue
-        # Best proposals: biggest lineup upgrade, then fairest
-        proposals.sort(key=lambda p: (-p["lineup_upgrade"], abs(p["value_delta"])))
+        # Prefer the biggest gain for me achieved with the least outgoing value
+        proposals.sort(key=lambda p: (-p["my_net"], p["give_total_value"]))
         deduped, seen = [], set()
         for p in proposals:
-            key = (p["give_player"], p["receive_player"])
+            key = (tuple(p["give_players"]), p["receive_player"])
             if key not in seen:
                 seen.add(key)
                 deduped.append(p)
+
+        their_needs = [n["position"] for n in identify_team_needs(other, league)
+                       if n["deficit"] > 0 and n["position"] in TRADE_CORE_POSITIONS]
         partners.append({
             "partner": other.team_name,
             "record": f"{other.wins}-{other.losses}",
-            "fit_score": round(fit_score, 1),
-            "their_needs": [pos for pos in TRADE_CORE_POSITIONS
-                            if other_needs.get(pos, {}).get("deficit", 0) > 0],
-            "their_surplus": [pos for pos in TRADE_CORE_POSITIONS
-                              if _tradeable_players(other_strength, pos)],
+            "fit_score": round(max(p["my_net"] + p["their_net"] for p in deduped), 1),
+            "their_needs": their_needs,
+            "their_surplus": [],
             "proposals": deduped[:max_proposals_per_partner],
         })
 
@@ -270,8 +344,13 @@ def find_trade_targets(my_team, league, max_suggestions=10):
     suggestions = []
     for partner in find_trade_matches(my_team, league):
         for p in partner["proposals"]:
-            suggestions.append({**p, "trade_partner": partner["partner"]})
-    suggestions.sort(key=lambda x: -x["lineup_upgrade"])
+            suggestions.append({
+                **p,
+                "trade_partner": partner["partner"],
+                "give_player": " + ".join(p["give_players"]),
+                "give_position": "/".join(dict.fromkeys(p["give_positions"])),
+            })
+    suggestions.sort(key=lambda x: -x["my_net"])
     return suggestions[:max_suggestions]
 
 
