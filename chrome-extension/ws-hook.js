@@ -7,44 +7,48 @@
   window.__ffaHooked = true;
 
   const seen = new Map();  // playerId -> teamId|null (re-relay when team appears)
-  const MAX_IDS_PER_FRAME = 30;
+  const MAX_IDS_PER_FRAME = 500;  // catch-up snapshots carry a whole draft
+  const EXCLUDE = /queue|watchlist|ranking/i;
 
-  // Only mine frames that look like completed selections. Queue edits also
-  // carry playerIds — marking your own queue as drafted would poison the
-  // board, so anything queue-flavored is skipped outright.
-  function isPickFrame(data) {
-    if (/queue|watchlist|ranking/i.test(data)) return false;
-    return /select|pick|draft/i.test(data);
-  }
-
+  // Queue edits also carry playerIds — marking your own queue as drafted
+  // would poison the board. Exclusion is structural (skip queue-named
+  // subtrees and queue-typed objects) so a big state snapshot that happens
+  // to CONTAIN queue data still yields its picks.
   function collectPicks(value, out) {
     if (value == null || out.size >= MAX_IDS_PER_FRAME) return;
-    if (typeof value === "object") {
-      let playerId = null;
-      let teamId = null;
-      for (const [k, v] of Object.entries(value)) {
-        if (/playerid/i.test(k) && Number.isInteger(v) && v > 0) playerId = v;
-        else if (/^teamid$/i.test(k) && Number.isInteger(v) && v > 0) teamId = v;
-      }
-      if (playerId) {
-        out.set(playerId, teamId);  // teamId sits beside playerId in pick objects
-      }
-      for (const v of Object.values(value)) {
+    if (Array.isArray(value)) {
+      for (const v of value) {
         if (typeof v === "object") collectPicks(v, out);
       }
+      return;
+    }
+    if (typeof value !== "object") return;
+    if (typeof value.type === "string" && EXCLUDE.test(value.type)) return;
+
+    let playerId = null;
+    let teamId = null;
+    for (const [k, v] of Object.entries(value)) {
+      if (/playerid/i.test(k) && Number.isInteger(v) && v > 0) playerId = v;
+      else if (/^teamid$/i.test(k) && Number.isInteger(v) && v > 0) teamId = v;
+    }
+    if (playerId) {
+      out.set(playerId, teamId);  // teamId sits beside playerId in pick objects
+    }
+    for (const [k, v] of Object.entries(value)) {
+      if (EXCLUDE.test(k)) continue;  // skip queue/watchlist/ranking branches
+      if (typeof v === "object") collectPicks(v, out);
     }
   }
 
   function mine(data) {
-    if (typeof data !== "string" || data.length > 200000) return;
-    if (!isPickFrame(data)) return;
+    if (typeof data !== "string" || data.length > 2000000) return;
     const out = new Map();  // playerId -> teamId|null
     if (data[0] === "{" || data[0] === "[") {
+      if (!/playerid/i.test(data)) return;  // cheap pre-filter
       try { collectPicks(JSON.parse(data), out); } catch (e) { /* not JSON */ }
-    }
-    if (out.size === 0) {
+    } else if (/select|pick|draft/i.test(data) && !EXCLUDE.test(data)) {
       // Token frames: "SELECTED 7 3117251 ..." — plausible id ints, team unknown
-      for (const m of (data.match(/\b\d{4,8}\b/g) || []).slice(0, MAX_IDS_PER_FRAME)) {
+      for (const m of (data.match(/\b\d{4,8}\b/g) || []).slice(0, 50)) {
         out.set(parseInt(m, 10), null);
       }
     }
