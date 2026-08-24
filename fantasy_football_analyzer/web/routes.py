@@ -665,6 +665,17 @@ def _api_cors(response):
     return response
 
 
+@bp.route("/api/debug-frame", methods=["POST", "OPTIONS"])
+def api_debug_frame():
+    """Log raw draft-room frame samples from the extension (format debugging)."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    payload = request.get_json(silent=True) or {}
+    sample = str(payload.get("sample", ""))[:4000]
+    print(f"FRAME-SAMPLE >>> {sample}", flush=True)
+    return jsonify({"ok": True})
+
+
 @bp.route("/api/mark-drafted", methods=["POST", "OPTIONS"])
 def api_mark_drafted():
     if request.method == "OPTIONS":
@@ -679,6 +690,35 @@ def api_mark_drafted():
         pool, *_ = get_valued_pool(league, config)
     except Exception:
         pool = {}
+
+    # Row-based marking: leaf texts from a pick-history row. Match the player
+    # against the pool and the team against league team names.
+    team_id_from_row = None
+    if not isinstance(pid, int) and payload.get("row"):
+        try:
+            from ..sources import normalize_name
+            texts = [str(t) for t in payload["row"]][:8]
+            for t in texts:
+                wanted = normalize_name(t)
+                pid = next(
+                    (p for p, e in pool.items() if normalize_name(e["name"]) == wanted),
+                    None,
+                )
+                if pid is not None:
+                    break
+            if pid is not None:
+                team_names = {t.team_name.strip().lower(): t.team_id for t in league.teams}
+                for t in texts:
+                    tid = team_names.get(t.strip().lower())
+                    if tid is not None:
+                        team_id_from_row = tid
+                        break
+        except Exception:
+            pid = None
+        if pid is None:
+            return jsonify({"error": "no pool match in row"}), 404
+        if team_id_from_row is not None:
+            payload["team_id"] = team_id_from_row
 
     # Name-based marking (e.g. picks scraped from the draft room page)
     if not isinstance(pid, int) and payload.get("name"):

@@ -56,6 +56,13 @@ chrome.runtime.onMessage.addListener((msg) => {
       post({ name });
     }
   }
+  for (const row of msg.rows || []) {
+    const key = `row:${row.join("|")}`;
+    if (!posted.has(key)) {
+      posted.add(key);
+      post({ row });
+    }
+  }
   if (msg.sample) {
     appUrl().then((base) => fetch(`${base}/api/debug-frame`, {
       method: "POST",
