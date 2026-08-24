@@ -56,42 +56,62 @@
 </div>
 {% endif %}
 
-{# Trade Suggestions (if team selected) #}
-{% if trade_suggestions %}
+{# Trade Matches by Partner (if team selected) #}
+{% if trade_matches %}
 <div class="card mb-4">
     <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-lightbulb"></i> Trade Suggestions</h5>
+        <h5 class="mb-0">
+            <i class="bi bi-lightbulb"></i> Trade Matches
+            <small class="text-muted fw-normal ms-2">partners ranked by complementary needs across all rosters</small>
+        </h5>
     </div>
     <div class="card-body">
         <div class="row g-3">
-            {% for s in trade_suggestions %}
-            <div class="col-md-6">
+            {% for m in trade_matches %}
+            <div class="col-lg-6">
                 <div class="card h-100">
-                    <div class="card-body">
-                        <h6 class="card-title">Trade #{{ loop.index }}</h6>
-                        <p class="mb-1"><strong>Partner:</strong> {{ s.trade_partner }}</p>
-                        <div class="row">
-                            <div class="col-6">
-                                <div class="text-danger">
-                                    <small class="text-muted">Give</small><br>
-                                    <strong>{{ s.give_player }}</strong>
-                                    <br><small>{{ s.give_position }} &middot; {{ "%.1f"|format(s.give_points) }} pts</small>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">{{ m.partner }} <small class="text-muted">({{ m.record }})</small></span>
+                        <span class="badge bg-info bg-opacity-75" title="Combined complementary deficits">fit {{ m.fit_score }}</span>
+                    </div>
+                    <div class="card-body pb-2">
+                        <p class="small text-muted mb-2">
+                            They need: {% for pos in m.their_needs %}<span class="pos-badge me-1">{{ pos }}</span>{% endfor %}
+                            &middot; can offer: {% for pos in m.their_surplus %}<span class="pos-badge me-1">{{ pos }}</span>{% endfor %}
+                        </p>
+                        {% for s in m.proposals %}
+                        <div class="border rounded p-2 mb-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="text-danger">{{ s.give_player }}</span>
+                                    <span class="pos-badge mx-1">{{ s.give_position }}</span>
+                                    <i class="bi bi-arrow-left-right text-muted mx-1"></i>
+                                    <span class="text-success">{{ s.receive_player }}</span>
+                                    <span class="pos-badge ms-1">{{ s.receive_position }}</span>
+                                </div>
+                                <div class="text-end text-nowrap">
+                                    {% if s.lineup_upgrade > 0 %}
+                                    <span class="badge bg-success bg-opacity-75" title="Projected starter upgrade">+{{ s.lineup_upgrade }} lineup</span>
+                                    {% endif %}
+                                    <span class="badge {% if s.value_delta >= 0 %}bg-secondary{% else %}bg-warning text-dark{% endif %} bg-opacity-75"
+                                          title="Value received minus value given">{{ '%+0.1f'|format(s.value_delta) }} val</span>
                                 </div>
                             </div>
-                            <div class="col-6">
-                                <div class="text-success">
-                                    <small class="text-muted">Receive</small><br>
-                                    <strong>{{ s.receive_player }}</strong>
-                                    <br><small>{{ s.receive_position }} &middot; {{ "%.1f"|format(s.receive_points) }} pts</small>
-                                </div>
-                            </div>
+                            <small class="text-muted">{{ s.reason }}</small>
                         </div>
-                        <p class="mt-2 mb-0 text-muted"><small><i class="bi bi-info-circle"></i> {{ s.reason }}</small></p>
+                        {% endfor %}
                     </div>
                 </div>
             </div>
             {% endfor %}
         </div>
+    </div>
+</div>
+{% elif team_name %}
+<div class="card mb-4">
+    <div class="card-body text-center text-muted py-3">
+        <i class="bi bi-lightbulb"></i> No mutually beneficial trades found right now —
+        no opponent is both weak where you're deep and deep where you're weak.
     </div>
 </div>
 {% endif %}

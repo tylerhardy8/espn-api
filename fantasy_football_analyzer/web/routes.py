@@ -14,7 +14,10 @@ from ..historical import (
     analyze_scoring_trends, analyze_manager_tendencies, analyze_luck,
 )
 from ..draft import get_draft_recommendations, analyze_draft_picks
-from ..trades import evaluate_roster_strength, identify_team_needs, find_trade_targets
+from ..trades import (
+    evaluate_roster_strength, identify_team_needs, find_trade_targets,
+    find_trade_matches,
+)
 from ..waivers import get_top_free_agents, find_streamers, get_waiver_recommendations
 from ..draft_tracker import DraftState
 from ..rss_news import fetch_news, match_news_to_players
@@ -481,7 +484,7 @@ def trades():
         }
 
     needs = []
-    trade_suggestions = []
+    trade_matches = []
     if team_name:
         my_team = next(
             (t for t in league.teams if t.team_name.lower() == team_name.lower()), None
@@ -492,15 +495,15 @@ def trades():
             except Exception:
                 needs = []
             try:
-                trade_suggestions = find_trade_targets(my_team, league)
+                trade_matches = find_trade_matches(my_team, league)
             except Exception:
-                trade_suggestions = []
+                trade_matches = []
 
     return render_template(
         "trades.html",
         roster_strengths=roster_strengths,
         needs=needs,
-        trade_suggestions=trade_suggestions,
+        trade_matches=trade_matches,
         team_name=team_name,
         teams=teams,
         ai_available=ai_available(),
@@ -521,13 +524,43 @@ def trades_ai():
         context_lines = []
         for team in league.teams:
             strengths = evaluate_roster_strength(team)
-            context_lines.append(f"{team.team_name} ({team.wins}-{team.losses}):")
+            team_needs = identify_team_needs(team, league)
+            weak = [n["position"] for n in team_needs if n["deficit"] > 0][:3]
+            context_lines.append(
+                f"{team.team_name} ({team.wins}-{team.losses})"
+                + (f" — weak at: {', '.join(weak)}" if weak else " — no clear weakness")
+                + ":"
+            )
             for pos in ["QB", "RB", "WR", "TE"]:
                 if pos in strengths:
                     names = ", ".join(p["name"] for p in strengths[pos]["starters"])
+                    bench = ", ".join(p["name"] for p in strengths[pos]["bench"][:2])
                     context_lines.append(
                         f"  {pos}: {names} ({strengths[pos]['starter_points']:.1f} pts)"
+                        + (f" | bench: {bench}" if bench else "")
                     )
+
+        # Computed mutual-fit matches so the AI grounds advice in real partners
+        if team_name:
+            my_team = next(
+                (t for t in league.teams if t.team_name.lower() == team_name.lower()),
+                None,
+            )
+            if my_team is not None:
+                matches = find_trade_matches(my_team, league)
+                if matches:
+                    context_lines.append("\nCOMPUTED TRADE MATCHES (mutual-need fits):")
+                    for m in matches:
+                        context_lines.append(
+                            f"  {m['partner']} (fit {m['fit_score']}): "
+                            f"needs {', '.join(m['their_needs']) or '-'}"
+                        )
+                        for s in m["proposals"]:
+                            context_lines.append(
+                                f"    {s['give_player']} ({s['give_position']}) for "
+                                f"{s['receive_player']} ({s['receive_position']}) — "
+                                f"lineup {s['lineup_upgrade']:+.1f}, value {s['value_delta']:+.1f}"
+                            )
 
         if team_name:
             prompt = (

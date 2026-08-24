@@ -10,6 +10,15 @@ Provides:
 from collections import defaultdict
 
 
+def _player_value(player):
+    """A player's trade value: actual points once games are played,
+    season projection before that (post-draft, totals are all zero)."""
+    total = getattr(player, "total_points", 0) or 0
+    if total > 0:
+        return total
+    return getattr(player, "projected_total_points", 0) or 0
+
+
 def evaluate_roster_strength(team):
     """Evaluate a team's roster by position, returning strength scores.
 
@@ -24,11 +33,12 @@ def evaluate_roster_strength(team):
             "projected_points": player.projected_total_points,
             "avg_points": player.avg_points,
             "slot": player.lineupSlot,
+            "value": round(_player_value(player), 1),
         })
 
-    # Sort by total points within each position
+    # Sort by trade value within each position
     for pos in by_position:
-        by_position[pos].sort(key=lambda x: x["total_points"], reverse=True)
+        by_position[pos].sort(key=lambda x: x["value"], reverse=True)
 
     strengths = {}
     starter_counts = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "D/ST": 1, "K": 1}
@@ -38,8 +48,8 @@ def evaluate_roster_strength(team):
         starters = players[:num_starters]
         bench = players[num_starters:]
 
-        total = sum(p["total_points"] for p in players)
-        starter_total = sum(p["total_points"] for p in starters)
+        total = sum(p["value"] for p in players)
+        starter_total = sum(p["value"] for p in starters)
 
         strengths[pos] = {
             "starters": starters,
@@ -100,7 +110,7 @@ def evaluate_trade(team_a, players_give, team_b, players_receive):
     for name in players_give:
         for player in team_a.roster:
             if player.name.lower() == name.lower():
-                give_value += player.total_points
+                give_value += _player_value(player)
                 give_details.append({
                     "name": player.name,
                     "position": player.position,
@@ -115,7 +125,7 @@ def evaluate_trade(team_a, players_give, team_b, players_receive):
     for name in players_receive:
         for player in team_b.roster:
             if player.name.lower() == name.lower():
-                receive_value += player.total_points
+                receive_value += _player_value(player)
                 receive_details.append({
                     "name": player.name,
                     "position": player.position,
@@ -146,62 +156,122 @@ def evaluate_trade(team_a, players_give, team_b, players_receive):
     }
 
 
-def find_trade_targets(my_team, league, max_suggestions=10):
-    """Find beneficial trade opportunities.
+TRADE_CORE_POSITIONS = ("QB", "RB", "WR", "TE")
+FAIRNESS_BAND = 0.30  # proposals within +/-30% of value are plausibly acceptable
 
-    Identifies positions of need for your team and surplus, then finds
-    other teams with the inverse needs to suggest mutually beneficial trades.
+
+def _tradeable_players(strength, pos):
+    """Players a team could realistically move at a position: bench pieces,
+    plus the second starter when they're two-deep at a two-starter spot."""
+    data = strength.get(pos, {})
+    candidates = list(data.get("bench", []))
+    starters = data.get("starters", [])
+    if len(starters) >= 2 and data.get("depth", 0) >= 3:
+        candidates.append(starters[-1])
+    return sorted(candidates, key=lambda p: p["value"], reverse=True)
+
+
+def find_trade_matches(my_team, league, max_partners=6, max_proposals_per_partner=3):
+    """Scan every opposing roster for mutually beneficial trades.
+
+    For each opponent, finds complementary need/surplus pairs (they're weak
+    where I'm deep, and strong where I'm weak), proposes value-balanced
+    player swaps, and estimates how much each swap upgrades my starting
+    lineup. Returns partners sorted by fit.
     """
-    my_needs = identify_team_needs(my_team, league)
+    my_needs = {n["position"]: n for n in identify_team_needs(my_team, league)}
     my_strength = evaluate_roster_strength(my_team)
 
-    # Find positions where we have surplus (bench depth with good players)
-    surplus_positions = []
-    for pos, data in my_strength.items():
-        if data["depth"] >= 3 and data["bench"]:
-            surplus_positions.append((pos, data["bench"][0]))  # best bench player
-
-    # Find positions of need (positive deficit)
-    need_positions = [n for n in my_needs if n["deficit"] > 0]
-
-    suggestions = []
-    for other_team in league.teams:
-        if other_team.team_id == my_team.team_id:
+    partners = []
+    for other in league.teams:
+        if other.team_id == my_team.team_id:
             continue
+        other_needs = {n["position"]: n for n in identify_team_needs(other, league)}
+        other_strength = evaluate_roster_strength(other)
 
-        other_needs = identify_team_needs(other_team, league)
-        other_strength = evaluate_roster_strength(other_team)
-
-        # Look for complementary needs
-        for my_need in need_positions[:3]:
-            need_pos = my_need["position"]
-            other_has = other_strength.get(need_pos, {})
-
-            if not other_has.get("bench"):
+        proposals = []
+        fit_score = 0.0
+        for get_pos in TRADE_CORE_POSITIONS:      # position I want back
+            if my_needs.get(get_pos, {}).get("deficit", 0) <= 0:
                 continue
+            for give_pos in TRADE_CORE_POSITIONS:  # position I'd send away
+                if give_pos == get_pos:
+                    continue
+                if other_needs.get(give_pos, {}).get("deficit", 0) <= 0:
+                    continue  # they don't need what I'd send
 
-            # Check if other team needs what we have surplus of
-            for surplus_pos, surplus_player in surplus_positions:
-                other_need_for_surplus = next(
-                    (n for n in other_needs if n["position"] == surplus_pos and n["deficit"] > 0),
-                    None,
-                )
-                if not other_need_for_surplus:
+                gives = _tradeable_players(my_strength, give_pos)
+                gets = _tradeable_players(other_strength, get_pos)
+                if not gives or not gets:
                     continue
 
-                target_player = other_has["bench"][0]
-                suggestions.append({
-                    "trade_partner": other_team.team_name,
-                    "give_player": surplus_player["name"],
-                    "give_position": surplus_pos,
-                    "give_points": surplus_player["total_points"],
-                    "receive_player": target_player["name"],
-                    "receive_position": need_pos,
-                    "receive_points": target_player["total_points"],
-                    "reason": f"You need {need_pos}, they need {surplus_pos}",
-                })
+                fit_score += (my_needs[get_pos]["deficit"]
+                              + other_needs[give_pos]["deficit"])
 
-    suggestions.sort(key=lambda x: x["receive_points"], reverse=True)
+                # Best value-balanced pairing within the fairness band
+                for give in gives[:2]:
+                    for get in gets[:2]:
+                        if give["value"] <= 0 or get["value"] <= 0:
+                            continue
+                        imbalance = (get["value"] - give["value"]) / max(give["value"], 1)
+                        if abs(imbalance) > FAIRNESS_BAND:
+                            continue
+                        # Upgrade: does the incoming player beat my worst starter there?
+                        my_starters = my_strength.get(get_pos, {}).get("starters", [])
+                        floor = my_starters[-1]["value"] if my_starters else 0
+                        upgrade = round(get["value"] - floor, 1)
+                        proposals.append({
+                            "give_player": give["name"],
+                            "give_position": give_pos,
+                            "give_points": give["value"],
+                            "receive_player": get["name"],
+                            "receive_position": get_pos,
+                            "receive_points": get["value"],
+                            "value_delta": round(get["value"] - give["value"], 1),
+                            "lineup_upgrade": upgrade,
+                            "reason": (
+                                f"They're thin at {give_pos} "
+                                f"(-{other_needs[give_pos]['deficit']:.0f} vs league avg); "
+                                f"you're thin at {get_pos} "
+                                f"(-{my_needs[get_pos]['deficit']:.0f})"
+                            ),
+                        })
+
+        if not proposals:
+            continue
+        # Best proposals: biggest lineup upgrade, then fairest
+        proposals.sort(key=lambda p: (-p["lineup_upgrade"], abs(p["value_delta"])))
+        deduped, seen = [], set()
+        for p in proposals:
+            key = (p["give_player"], p["receive_player"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(p)
+        partners.append({
+            "partner": other.team_name,
+            "record": f"{other.wins}-{other.losses}",
+            "fit_score": round(fit_score, 1),
+            "their_needs": [pos for pos in TRADE_CORE_POSITIONS
+                            if other_needs.get(pos, {}).get("deficit", 0) > 0],
+            "their_surplus": [pos for pos in TRADE_CORE_POSITIONS
+                              if _tradeable_players(other_strength, pos)],
+            "proposals": deduped[:max_proposals_per_partner],
+        })
+
+    partners.sort(key=lambda p: p["fit_score"], reverse=True)
+    return partners[:max_partners]
+
+
+def find_trade_targets(my_team, league, max_suggestions=10):
+    """Flat list of the best trade proposals across all partners.
+
+    Kept for CLI/report compatibility; the web UI uses find_trade_matches.
+    """
+    suggestions = []
+    for partner in find_trade_matches(my_team, league):
+        for p in partner["proposals"]:
+            suggestions.append({**p, "trade_partner": partner["partner"]})
+    suggestions.sort(key=lambda x: -x["lineup_upgrade"])
     return suggestions[:max_suggestions]
 
 
