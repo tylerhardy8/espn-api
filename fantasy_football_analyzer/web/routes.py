@@ -895,7 +895,7 @@ def _build_draft_state(league, config):
             premiums = positional_premiums(intel, pool, len(league.teams), roster_size or 16)
             apply_market_values(pool, premiums, len(league.teams),
                                 budget or getattr(league.settings, "auction_budget", 0) or 200,
-                                roster_size or 16)
+                                roster_size or 16, intel=intel)
         except Exception:
             premiums = {}
     else:

@@ -451,19 +451,35 @@ def positional_premiums(intel, pool, num_teams, roster_size):
     return premiums
 
 
-def apply_market_values(pool, premiums, num_teams, budget, roster_size):
-    """Set entry["market_value"] = value x positional premium, rescaled so the
-    top rosterable market values still sum to the league's cash (the value
-    column is untouched — it stays the bargain yardstick)."""
+CURVE_RANKS = 12  # ranks per position where the sale-price curve is direct evidence
+
+
+def apply_market_values(pool, premiums, num_teams, budget, roster_size, intel=None):
+    """Set entry["market_value"]: what a player is likely to cost in this room.
+
+    Base: value x positional premium (aggregate spend share). At the top of
+    each position, blend toward the league's own price curve for that rank
+    (what the Nth-priciest RB actually sold for, budget-scaled) — a flat
+    premium understates stars and overstates depth. Rescaled so the top
+    rosterable market values still sum to the league's cash. The value
+    column is untouched — it stays the bargain yardstick.
+    """
     if not pool:
         return
-    if not premiums:
+    if not premiums and not intel:
         for e in pool.values():
             e.pop("market_value", None)
         return
     for e in pool.values():
-        prem = premiums.get(e.get("position"), 1.0)
-        e["market_value"] = max(1.0, e.get("value", 1.0) * prem)
+        prem = premiums.get(e.get("position"), 1.0) if premiums else 1.0
+        market = max(1.0, e.get("value", 1.0) * prem)
+        rank = e.get("pos_rank") or 0
+        if intel and 0 < rank <= CURVE_RANKS:
+            curve_price = league_price(intel, e.get("position"), rank, budget)
+            if curve_price:
+                weight = 0.7 if rank <= 6 else 0.5
+                market = weight * curve_price + (1 - weight) * market
+        e["market_value"] = market
     top_n = max(1, int(num_teams) * int(roster_size))
     ranked = sorted(pool.values(), key=lambda e: e["market_value"], reverse=True)[:top_n]
     total = sum(e["market_value"] for e in ranked)
