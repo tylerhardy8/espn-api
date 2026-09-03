@@ -16,8 +16,22 @@
   }
   const isMock = /mock/i.test(location.pathname);
 
+  let dead = false;  // extension reloaded while this tab stayed open
+
   function send(payload) {
-    chrome.runtime.sendMessage({ leagueId: pageLeagueId(), myTeamId: roomTeamId, mock: isMock, ...payload });
+    if (dead) return;
+    try {
+      const p = chrome.runtime.sendMessage({
+        leagueId: pageLeagueId(), myTeamId: roomTeamId, mock: isMock, ...payload,
+      });
+      // MV3 returns a promise; a sleeping worker rejects harmlessly
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) {
+      // "Extension context invalidated": this script belongs to a previous
+      // load of the extension. Stop scanning; a tab reload installs the new one.
+      dead = true;
+      clearInterval(timer);
+    }
   }
 
   window.addEventListener("message", (event) => {
@@ -67,6 +81,6 @@
     if (rows.length) send({ rows });
   }
 
-  setInterval(scanDom, 6000);
+  const timer = setInterval(scanDom, 6000);
   setTimeout(scanDom, 2000);
 })();
