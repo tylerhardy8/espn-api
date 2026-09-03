@@ -18,7 +18,7 @@ from .helpers import (
     get_league_or_redirect, get_valued_pool, get_ai_key, ai_available,
     get_league_intel_cached, warm_league_intel,
 )
-from ..league_intel import rival_profile, league_price
+from ..league_intel import rival_profile, league_price, player_sale_history
 from ..historical import get_manager_key
 from .routes import bp, _build_draft_state, trade_ai_advice, waiver_ai_advice
 
@@ -312,6 +312,7 @@ def _auction_payload(live, league, config, pool, team_name):
             "league_price": hist_price,
             "expected_price": expect,
             "rival": rival,
+            "sale_history": player_sale_history(intel, pid),
             "intel_ready": intel is not None,
         })
     except Exception as e:

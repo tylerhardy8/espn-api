@@ -299,6 +299,14 @@ function renderBlock(b) {
 function historyHtml(b) {
   if (!b.intel_ready) return `<div class="meta">league history loading…</div>`;
   const lines = [];
+  if (b.sale_history && b.sale_history.length) {
+    const hist = b.sale_history.map((h) =>
+      `${h.year}: <strong>$${h.bid}</strong> <span class="who">(${esc(h.manager || h.team)}${h.keeper ? ", keeper" : ""})</span>`
+    ).join(" · ");
+    lines.push(`<div class="hist">Sold here ${hist}</div>`);
+  } else if (b.intel_ready) {
+    lines.push(`<div class="hist">Not drafted in this league's recent auctions</div>`);
+  }
   if (b.league_price) {
     const rank = b.pos_rank ? `${esc(b.position)}${b.pos_rank}` : esc(b.position);
     const hot = b.league_price > b.suggested_max_bid;

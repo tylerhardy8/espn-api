@@ -44,6 +44,8 @@ def build_league_intel(leagues_by_year):
     pos_dollars = defaultdict(float)
     pos_points = defaultdict(float)
     team_spend_years = []                 # avg dollars spent per team, per season
+    player_prices = defaultdict(dict)     # playerId -> {year: {"bid", "manager", "team"}}
+    budget_years = []                     # auction budget per season (for scaling)
 
     for year, league in leagues_by_year.items():
         # Results + activity
@@ -87,10 +89,20 @@ def build_league_intel(leagues_by_year):
                     season_prices[position].append(pick.bid_amount)
                     pos_dollars[position] += pick.bid_amount
                     pos_points[position] += max(0.0, total_points or 0.0)
+                if pick.bid_amount and getattr(pick, "team", None):
+                    player_prices[pick.playerId][year] = {
+                        "bid": pick.bid_amount,
+                        "manager": _manager_of(pick.team),
+                        "team": pick.team.team_name,
+                        "keeper": bool(getattr(pick, "keeper_status", False)),
+                    }
             for pos, prices in season_prices.items():
                 pos_price_years[pos].append(sorted(prices, reverse=True))
             if league.teams:
                 team_spend_years.append(sum(bids) / len(league.teams))
+            past_budget = getattr(league.settings, "auction_budget", 0) or 0
+            if past_budget:
+                budget_years.append(past_budget)
 
         if champion is not None:
             champ_style = year_styles.get(_manager_of(champion))
@@ -140,7 +152,14 @@ def build_league_intel(leagues_by_year):
         },
         "avg_team_spend": (round(sum(team_spend_years) / len(team_spend_years), 1)
                            if team_spend_years else None),
+        "avg_budget": (round(sum(budget_years) / len(budget_years), 1)
+                       if budget_years else None),
+        # What each player sold for in past drafts of this league
+        "player_prices": {pid: prices for pid, prices in player_prices.items()},
     }
+    top3 = [m["draft_style"]["avg_top3_share"] for m in managers.values()
+            if m.get("draft_style") and m["draft_style"].get("is_auction")]
+    league_summary["avg_top3_share"] = round(sum(top3) / len(top3), 3) if top3 else None
     # Per-manager positional share of their own budget (vs the league's share)
     for name, m in managers.items():
         style = m.get("draft_style")
@@ -341,8 +360,13 @@ def rival_profile(intel, manager, position):
         tags.append("pays above value in general")
     elif ppp_ratio and ppp_ratio <= 0.85:
         tags.append("bargain hunter")
-    if style.get("avg_top3_share", 0) >= 0.5:
-        tags.append(f"stars-and-scrubs ({style['avg_top3_share'] * 100:.0f}% on top 3)")
+    norm = league.get("avg_top3_share")
+    share = style.get("avg_top3_share")
+    if share and norm:
+        if share >= norm + 0.08:
+            tags.append(f"stars-and-scrubs ({share * 100:.0f}% on top 3 vs league {norm * 100:.0f}%)")
+        elif share <= norm - 0.08:
+            tags.append(f"spreads the budget ({share * 100:.0f}% on top 3 vs league {norm * 100:.0f}%)")
     return {
         "manager": manager,
         "pos_ratio": pos_ratio,
@@ -365,7 +389,21 @@ def league_price(intel, position, pos_rank, budget):
         return None
     idx = min(len(curve), max(1, int(pos_rank))) - 1
     price = curve[idx]
-    hist_budget = league.get("avg_team_spend")
+    # Scale by the budget those seasons were played under (not by dollars
+    # actually spent — leftover cash would otherwise inflate the history)
+    hist_budget = league.get("avg_budget") or league.get("avg_team_spend")
     if hist_budget and budget:
         price = price * (budget / hist_budget)
     return max(1, int(round(price)))
+
+
+def player_sale_history(intel, player_id, seasons=2):
+    """The player's most recent sale prices in this league, newest first:
+    [{"year", "bid", "manager", "team", "keeper"}]."""
+    if not intel:
+        return []
+    prices = ((intel.get("league") or {}).get("player_prices") or {}).get(player_id) or {}
+    out = []
+    for year in sorted(prices, reverse=True)[:seasons]:
+        out.append({"year": year, **prices[year]})
+    return out
