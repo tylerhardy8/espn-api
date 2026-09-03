@@ -251,9 +251,12 @@ def fetch_fantasypros_rankings(year, scoring="PPR", api_key=None):
 # ---------------------------------------------------------------------------
 
 def enrich_pool(pool, league, budget, num_teams, roster_size):
-    """Attach Sleeper + FantasyPros data to pool entries and reblend values.
+    """Attach Sleeper + FantasyPros data to pool entries (mutates in place).
 
-    Mutates entries in place. Returns a status dict.
+    Attaches injury / practice / depth / age / trending from Sleeper and
+    ECR, tier, best/worst rank, and a dollar `expert_value` from FantasyPros.
+    Blending into `value` happens afterwards in auction.finalize_values.
+    Returns a status dict.
     """
     status = {"sleeper": False, "fantasypros": False, "fp_matched": 0, "trending": 0}
 
@@ -268,24 +271,35 @@ def enrich_pool(pool, league, budget, num_teams, roster_size):
             if not s:
                 continue
             entry["sleeper_injury"] = s["injury_status"]
+            entry["sleeper_status"] = s.get("status") or ""
             entry["injury_body_part"] = s["injury_body_part"]
             entry["practice"] = s["practice_participation"]
             if s["depth_chart_position"] and s["depth_chart_order"]:
                 entry["depth_chart"] = f"{s['depth_chart_position']}{s['depth_chart_order']}"
             entry["age"] = s["age"]
+            entry["years_exp"] = s.get("years_exp")
             entry["trending_adds"] = trending.get(pid, 0)
             # Prefer a concrete Sleeper designation when ESPN says nothing
             if (not entry.get("injury_status") or entry["injury_status"].upper() == "ACTIVE") \
                     and s["injury_status"]:
                 entry["injury_status"] = s["injury_status"]
 
-    # --- FantasyPros ECR: attach + blend as a dollar signal -----------------
+    # --- FantasyPros ECR: attach + derive a dollar signal -------------------
     year = getattr(league, "year", None)
     fp = fetch_fantasypros_rankings(year, detect_scoring(league)) if year else {}
     if fp:
         status["fantasypros"] = True
+        from .auction import EXTERNAL_BUDGET_BASIS
+        scale = (budget / EXTERNAL_BUDGET_BASIS) if budget else 1.0
+        # The model's own dollar ladder, indexed by consensus rank: turns a
+        # rank into "what the model pays the player ranked there"
         ranked = sorted(pool.values(), key=lambda e: e.get("value", 1.0), reverse=True)
         value_by_rank = [e.get("value", 1.0) for e in ranked]
+
+        def dollars_at(rank):
+            idx = int(rank) - 1
+            return value_by_rank[idx] if 0 <= idx < len(value_by_rank) else 1.0
+
         matched = 0
         for entry in pool.values():
             pos = entry.get("position", "")
@@ -297,20 +311,21 @@ def enrich_pool(pool, league, budget, num_teams, roster_size):
             entry["fp_ecr"] = f["ecr"]
             entry["fp_tier"] = f["tier"]
             entry["fp_pos_rank"] = f["pos_rank"]
-            idx = f["ecr"] - 1
-            expert_value = value_by_rank[idx] if 0 <= idx < len(value_by_rank) else 1.0
+            entry["fp_best"] = f.get("best")
+            entry["fp_worst"] = f.get("worst")
+            expert_value = dollars_at(f["ecr"])
             if f.get("auction_value"):
                 try:
-                    expert_value = (expert_value + float(f["auction_value"])) / 2
+                    expert_value = (expert_value + float(f["auction_value"]) * scale) / 2
                 except (TypeError, ValueError):
                     pass
             entry["expert_value"] = round(expert_value, 1)
-            entry["value"] = round((entry.get("value", 1.0) + expert_value) / 2, 1)
+            # Ceiling / floor: the ladder at the experts' best and worst ranks
+            if f.get("best"):
+                entry["ceiling_value"] = round(dollars_at(f["best"]), 1)
+            if f.get("worst"):
+                entry["floor_value"] = round(dollars_at(f["worst"]), 1)
         status["fp_matched"] = matched
-
-        if matched:
-            from .auction import normalize_values
-            normalize_values(pool, budget, num_teams, roster_size)
 
     LAST_STATUS.update(status)
     return status

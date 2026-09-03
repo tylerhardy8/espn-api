@@ -100,3 +100,40 @@ Everything below was finished and verified after the pause:
 - AI auto-advice: client-side trigger on new picks, throttled ≥90s, toggle default ON.
 - No ESPN config on this machine (`~/.fantasy_football_analyzer.json` absent) — final live test
   needs the user's league id/cookies.
+
+## Model review, Sep 3 2026 — what changed and the backtest
+
+Valuation pipeline (`auction.py`, `lineup.py`, `sources.enrich_pool`):
+- Replacement baseline = last **starter** (fixed slots + flex share), not last bench player.
+  Two-segment VBD: dollars above the starter line plus a `DEPTH_DOLLAR_SHARE = 0.10` depth
+  allowance down to the roster line — no $1 cliff. Slot truth lives in `lineup.slot_profile`
+  (recognizes RB/WR/TE, FLEX, RB/WR, WR/TE, OP; positions with no slot are never priced;
+  IDP/P/HC slots reserved at `NONCORE_SLOT_PRICE`; normalization runs over core slots only).
+- `CAPPED_POSITIONS`: K and D/ST top-2 at $2, the rest $1, applied after blending.
+- External dollar signals scaled by `budget / EXTERNAL_BUDGET_BASIS (200)`; explicit blend
+  `W_MODEL, W_CROWD, W_EXPERT = 0.45, 0.20, 0.35` (renormalized over signals present).
+- `AVAILABILITY` multipliers from ESPN/Sleeper status (IR .35, PUP .65, SUSP .80, OUT .85,
+  D .92, Q .97, inactive .20) applied to the blended value; shown on the block.
+- Byes from the pro schedule (`bye` on every entry, collision flag on the block); lineup-aware
+  need on the block (`lineup.marginal_value` → `need_mult` in [0.5, 1]).
+- FantasyPros best/worst → `ceiling_value` / `floor_value` (display + AI context only).
+
+Backtest against the Papa Trump League's real 2025 auction (215 priced picks, $300 budget,
+`tools/backtest_2025.py`):
+
+| variant | ρ(value, price) | ρ(value, actual pts) | MAE | top-30 MAE |
+|---|---|---|---|---|
+| old (bench baseline, unscaled blend) | 0.824 | 0.543 | $9.2 | $26.1 |
+| **new defaults** | **0.839** | **0.569** | **$7.1** | **$18.1** |
+| new, depth 0.05 | 0.835 | 0.571 | $7.3 | $18.1 |
+| new, depth 0.15 | 0.842 | 0.567 | $7.0 | $18.2 |
+| new, no K/DST cap | 0.817 | 0.589 | $7.2 | $18.1 |
+
+Reference: the room's own prices predicted 2025 actual points at ρ 0.504; raw ESPN projection
+0.727. Model dollar share RB 53 / WR 28 vs the room's RB 40 / WR 46 — the room pays a WR
+premium the projections don't support; the market model (`positional_premiums`) carries that
+into *price*, while *value* stays projection-based. Caveat: ESPN's 2025 season projection row
+may carry in-season updates (applies equally to every variant).
+
+Rollback image for draft day: `ffa:pre-review`
+(`docker rm -f ffa; docker run -d --name ffa -p 5050:5000 -v ffa-config:/root --env-file .env ffa:pre-review`).

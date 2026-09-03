@@ -4,7 +4,7 @@ import os
 import time
 from flask import flash, redirect, url_for
 
-from ..config import load_config, get_league_config
+from ..config import load_config, get_league_config, DEFAULT_YEAR
 from ..league_connector import connect_league
 
 # Simple in-memory cache for league objects (avoid reconnecting every request)
@@ -49,7 +49,7 @@ def get_league_or_redirect(config=None):
         flash("No league configured. Please set up your league first.", "warning")
         return None, None, redirect(url_for("main.setup"))
 
-    year = config.get("year", 2025)
+    year = config.get("year", DEFAULT_YEAR)
     cache_key = f"{league_cfg['league_id']}_{year}"
 
     # Check cache
@@ -102,7 +102,7 @@ def get_league_intel(config):
     if not league_cfg.get("league_id"):
         return None
 
-    year = config.get("year", 2025)
+    year = config.get("year", DEFAULT_YEAR)
     key = f"{league_cfg['league_id']}_{year}"
     if key in _intel_cache:
         cached, cached_time = _intel_cache[key]
@@ -124,7 +124,7 @@ _intel_building = set()
 
 def _intel_key(config):
     league_cfg = get_league_config(config)
-    return f"{league_cfg.get('league_id')}_{config.get('year', 2025)}"
+    return f"{league_cfg.get('league_id')}_{config.get('year', DEFAULT_YEAR)}"
 
 
 def get_league_intel_cached(config):

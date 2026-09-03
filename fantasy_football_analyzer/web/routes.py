@@ -5,6 +5,7 @@ from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 
 from ..config import (
+    DEFAULT_YEAR,
     load_config, save_config, get_league_config,
     add_league, remove_league, set_active_league,
 )
@@ -56,7 +57,7 @@ def dashboard():
                 "name": getattr(league.settings, "name", "League"),
                 "teams": len(league.teams),
                 "current_week": league.current_week,
-                "year": config.get("year", 2025),
+                "year": config.get("year", DEFAULT_YEAR),
                 "standings": [
                     {
                         "rank": i + 1,
@@ -235,7 +236,7 @@ def setup():
             flash("League ID must be a number.", "danger")
             return render_template("setup.html", config=config, ai_available=ai_available())
 
-        config["year"] = int(request.form.get("year") or config.get("year", 2025))
+        config["year"] = int(request.form.get("year") or config.get("year", DEFAULT_YEAR))
         espn_s2 = request.form.get("espn_s2", "").strip()
         if espn_s2:
             config["espn_s2"] = espn_s2
@@ -275,7 +276,7 @@ def _setup_add_league(config, name=None):
     name = name or request.form.get("name") or f"League {league_id}"
     config = add_league(
         config, name, league_id,
-        year=request.form.get("year") or config.get("year", 2025),
+        year=request.form.get("year") or config.get("year", DEFAULT_YEAR),
         team_name=request.form.get("team_name", ""),
         make_active=True,
     )
@@ -340,7 +341,7 @@ def history():
     if err:
         return err
 
-    years_str = request.args.get("years", str(config.get("year", 2025)))
+    years_str = request.args.get("years", str(config.get("year", DEFAULT_YEAR)))
     try:
         years = parse_year_range(years_str)
     except Exception:
@@ -993,6 +994,12 @@ def api_draft_state():
                     "adjusted_value": e["adjusted_value"],
                     "market_value": e.get("market_value"),
                     "market_price": e.get("market_price"),
+                    "crowd_value": e.get("crowd_value"),
+                    "ceiling_value": e.get("ceiling_value"),
+                    "floor_value": e.get("floor_value"),
+                    "availability": e.get("availability", 1.0),
+                    "bye": e.get("bye"),
+                    "vbd": e.get("vbd", 0),
                     "projected_points": e.get("projected_points", 0),
                     "injury_status": e.get("injury_status", ""),
                     "practice": e.get("practice", ""),

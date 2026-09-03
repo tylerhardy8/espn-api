@@ -169,6 +169,20 @@ def build_draft_context(draft_state, my_team_name, league, num_available=40):
     return "\n".join(lines)
 
 
+def _risk_flags(e):
+    """Availability / bye / ceiling flags shared by both entry formatters."""
+    flags = []
+    avail = e.get("availability")
+    if avail is not None and avail < 1:
+        flags.append(f"avail {avail:.2f}")
+    if e.get("bye"):
+        flags.append(f"bye {e['bye']}")
+    ceil, floor = e.get("ceiling_value"), e.get("floor_value")
+    if ceil and floor and ceil > floor:
+        flags.append(f"ceiling ${ceil:.0f}/floor ${floor:.0f}")
+    return flags
+
+
 def _format_snake_entry(e):
     """'Name T2 (proj 285, ADP 14) [Q hamstring, ECR#12]' for snake contexts."""
     flags = []
@@ -182,6 +196,7 @@ def _format_snake_entry(e):
         flags.append(e["depth_chart"])
     if e.get("fp_ecr"):
         flags.append(f"ECR#{e['fp_ecr']}")
+    flags += _risk_flags(e)
     adp = e.get("adp")
     adp_txt = f", ADP {adp:.0f}" if adp and adp > 0 else ""
     flag_txt = f" [{', '.join(flags)}]" if flags else ""
@@ -293,6 +308,9 @@ def _format_available_entry(e):
         flags.append(f"ECR#{e['fp_ecr']}")
     if e.get("trending_adds"):
         flags.append(f"trending +{e['trending_adds']}")
+    flags += _risk_flags(e)
+    if e.get("market_price"):
+        flags.append(f"mkt ${e['market_price']:.0f}")
     flag_txt = f" [{', '.join(flags)}]" if flags else ""
     return f"{e['name']} T{e.get('tier', '?')} ${e['adjusted_value']:.0f}{flag_txt}"
 

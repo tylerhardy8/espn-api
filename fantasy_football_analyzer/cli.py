@@ -14,7 +14,7 @@ Usage:
 import argparse
 import sys
 
-from .config import load_config, save_config, get_league_config
+from .config import load_config, save_config, get_league_config, DEFAULT_YEAR
 from .league_connector import connect_league, connect_multi_year
 from .historical import format_historical_report
 from .draft import format_draft_report
@@ -67,8 +67,8 @@ def cmd_setup(args):
     if league_id:
         config["league_id"] = int(league_id)
 
-    year = input(f"Current season year [{config.get('year', 2025)}]: ").strip()
-    config["year"] = int(year) if year else config.get("year", 2025)
+    year = input(f"Current season year [{config.get('year', DEFAULT_YEAR)}]: ").strip()
+    config["year"] = int(year) if year else config.get("year", DEFAULT_YEAR)
 
     print()
     print("For private leagues, you need ESPN cookies from your browser.")
@@ -110,7 +110,7 @@ def cmd_history(args):
     """Run historical analysis across multiple seasons."""
     config, league_cfg = _get_league_or_exit(args)
 
-    years = parse_year_range(args.years) if args.years else [config.get("year", 2025)]
+    years = parse_year_range(args.years) if args.years else [config.get("year", DEFAULT_YEAR)]
     print(f"Loading {len(years)} season(s): {years}")
 
     leagues = connect_multi_year(
@@ -130,7 +130,7 @@ def cmd_draft(args):
     """Run draft analysis and recommendations."""
     config, league_cfg = _get_league_or_exit(args)
 
-    year = int(args.year) if args.year else config.get("year", 2025)
+    year = int(args.year) if args.year else config.get("year", DEFAULT_YEAR)
     team_name = args.team or config.get("team_name")
 
     print(f"Loading {year} season...")
@@ -144,7 +144,7 @@ def cmd_trades(args):
     """Run trade analysis and recommendations."""
     config, league_cfg = _get_league_or_exit(args)
 
-    year = int(args.year) if args.year else config.get("year", 2025)
+    year = int(args.year) if args.year else config.get("year", DEFAULT_YEAR)
     team_name = args.team or config.get("team_name")
 
     print(f"Loading {year} season...")
@@ -184,7 +184,7 @@ def cmd_waivers(args):
     """Run waiver wire analysis and recommendations."""
     config, league_cfg = _get_league_or_exit(args)
 
-    year = int(args.year) if args.year else config.get("year", 2025)
+    year = int(args.year) if args.year else config.get("year", DEFAULT_YEAR)
     team_name = args.team or config.get("team_name")
     week = int(args.week) if args.week else None
 
@@ -214,7 +214,7 @@ def cmd_live_draft(args):
     """Run the live draft tracker with AI-powered recommendations."""
     config, league_cfg = _get_league_or_exit(args)
 
-    year = int(args.year) if args.year else config.get("year", 2025)
+    year = int(args.year) if args.year else config.get("year", DEFAULT_YEAR)
     team_name = args.team or config.get("team_name")
     interval = int(args.interval) if args.interval else 10
     model = args.model or None
@@ -252,7 +252,7 @@ def cmd_full(args):
     """Run full analysis (history + draft + trades + waivers)."""
     config, league_cfg = _get_league_or_exit(args)
 
-    year = int(args.year) if args.year else config.get("year", 2025)
+    year = int(args.year) if args.year else config.get("year", DEFAULT_YEAR)
     team_name = args.team or config.get("team_name")
     years = parse_year_range(args.years) if args.years else [year]
 

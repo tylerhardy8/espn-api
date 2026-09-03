@@ -148,6 +148,8 @@ function flags(e) {
   if (e.depth_chart) out.push(`<span class="flag">${esc(e.depth_chart)}</span>`);
   if (e.fp_ecr) out.push(`<span class="flag">ECR#${e.fp_ecr}</span>`);
   if (e.trending_adds) out.push(`<span class="flag trend">🔥${e.trending_adds}</span>`);
+  if (e.availability != null && e.availability < 1) out.push(`<span class="flag out">avail ${Math.round(e.availability * 100)}%</span>`);
+  if (e.bye) out.push(`<span class="flag">bye ${e.bye}</span>`);
   return out.join("");
 }
 

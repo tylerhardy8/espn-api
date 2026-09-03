@@ -19,6 +19,8 @@ from .helpers import (
     get_league_intel_cached, warm_league_intel,
 )
 from ..league_intel import rival_profile, league_price, player_sale_history
+from ..auction import league_profile
+from ..lineup import marginal_value
 from ..historical import get_manager_key
 from .routes import bp, _build_draft_state, trade_ai_advice, waiver_ai_advice
 
@@ -270,9 +272,45 @@ def _auction_payload(live, league, config, pool, team_name):
         mine = next((b for b in budgets if b["team"].lower() == team_name.lower()), None)
         my_max = mine["max_bid"] if mine else state.budget
         pos = entry.get("position", "")
-        need_mult = 1.0 if needs.get(pos, 0) > 0 else 0.6
+        count_need = needs.get(pos, 0) > 0
+        my_picks = [p for p in state.team_rosters.get(team_name, []) if p.get("position")]
+
+        # Lineup-aware need: how many projected points the player actually
+        # adds to my current lineup (plus bench insurance), as a share of his
+        # value over a starter. 1.0 = fills an open or replacement-level slot;
+        # toward 0.5 = only displaces a good starter / sits on the bench.
+        lineup_gain = None
+        starts = None
+        try:
+            profile = league_profile(league)
+            mine = [
+                {"position": p["position"],
+                 "value": pool.get(p["player_id"], {}).get("projected_points", 0.0)}
+                for p in my_picks
+            ]
+            cand = {"position": pos, "value": entry.get("projected_points", 0.0)}
+            lineup_gain = round(marginal_value(mine, cand, profile), 1)
+            vbd = entry.get("vbd", 0) or 0
+            if vbd > 0:
+                need_mult = max(0.5, min(1.0, lineup_gain / vbd))
+            else:
+                need_mult = 1.0 if count_need else 0.6
+            starts = lineup_gain > 0.2 * cand["value"]
+        except Exception:
+            need_mult = 1.0 if count_need else 0.6
+        need = count_need or need_mult >= 0.75
+
         adjusted = entry.get("value", 1.0) * inflation
         suggested = int(min(my_max, max(1, round(adjusted * need_mult))))
+
+        # Bye-week collisions with my own picks
+        bye = entry.get("bye")
+        bye_collision = []
+        if bye:
+            for p in my_picks:
+                other = pool.get(p["player_id"], {})
+                if other.get("bye") == bye and other.get("position") == pos:
+                    bye_collision.append(p["player_name"])
 
         # League history: what this room has actually paid for a buy of this
         # rank at this position, and how the current high bidder tends to bid
@@ -303,7 +341,6 @@ def _auction_payload(live, league, config, pool, team_name):
         # value and market price only when I need the position and few
         # comparable players remain; PASS above market (or above my max).
         high = live["high_bid"]
-        need = needs.get(pos, 0) > 0
         scarce_n = state.scarcity(pid)
         scarce = scarce_n is not None and scarce_n <= 3
         stretch_cap = int(min(my_max, market_price)) if market_price else suggested
@@ -323,12 +360,30 @@ def _auction_payload(live, league, config, pool, team_name):
         else:
             verdict, reason = "pass", f"above market (~${market_price or suggested})"
 
+        notes = []
+        if lineup_gain is not None:
+            notes.append(f"adds +{lineup_gain:.0f} pts to your lineup" if starts
+                         else "would sit on your bench")
+        avail = entry.get("availability", 1.0)
+        if avail is not None and avail < 1:
+            status = entry.get("injury_status") or entry.get("sleeper_status") or ""
+            notes.append(f"availability {avail:.2f}" + (f" ({status})" if status else ""))
+        if bye_collision:
+            notes.append(f"shares bye {bye} with {', '.join(bye_collision[:2])}")
+        if notes:
+            reason = reason + "; " + "; ".join(notes)
+
         out.update({
             "name": entry["name"], "position": pos, "team": entry.get("team", ""),
             "tier": entry.get("tier"), "pos_rank": entry.get("pos_rank"),
             "value": entry.get("value"),
             "espn_value": entry.get("espn_value"), "adjusted_value": round(adjusted, 1),
-            "inflation": inflation, "need": needs.get(pos, 0) > 0,
+            "inflation": inflation, "need": need,
+            "need_mult": round(need_mult, 2), "lineup_gain": lineup_gain, "starts": starts,
+            "availability": entry.get("availability", 1.0),
+            "crowd_value": entry.get("crowd_value"),
+            "ceiling_value": entry.get("ceiling_value"), "floor_value": entry.get("floor_value"),
+            "bye": bye, "bye_collision": bye_collision,
             "my_max_bid": my_max, "suggested_max_bid": suggested,
             "market_value": market_value, "market_price": market_price,
             "stretch_cap": stretch_cap if market_price else None,

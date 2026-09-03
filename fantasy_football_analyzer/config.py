@@ -23,7 +23,7 @@ import json
 import os
 
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.fantasy_football_analyzer.json")
-DEFAULT_YEAR = 2025
+DEFAULT_YEAR = 2026
 PROFILE_FIELDS = ("league_id", "year", "team_name")
 
 
