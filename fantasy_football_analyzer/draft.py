@@ -40,24 +40,34 @@ def build_player_rankings(league, week=None):
     sorted by composite score.
     """
     rankings = []
+    seen = set()
+
+    def add(player, on_team):
+        if player.playerId in seen:
+            return
+        seen.add(player.playerId)
+        rankings.append({
+            "name": player.name,
+            "player_id": player.playerId,
+            "position": player.position,
+            "team": getattr(player, "proTeam", ""),
+            "total_points": round(getattr(player, "total_points", 0) or 0, 2),
+            "projected_points": round(getattr(player, "projected_total_points", 0) or 0, 2),
+            "avg_points": round(getattr(player, "avg_points", 0) or 0, 2),
+            "percent_owned": getattr(player, "percent_owned", 0),
+            "on_team": on_team,
+        })
 
     for team in league.teams:
         for player in team.roster:
-            projected = player.projected_total_points
-            actual = player.total_points
-            avg = player.avg_points
-
-            rankings.append({
-                "name": player.name,
-                "player_id": player.playerId,
-                "position": player.position,
-                "team": player.proTeam,
-                "total_points": round(actual, 2),
-                "projected_points": round(projected, 2),
-                "avg_points": round(avg, 2),
-                "percent_owned": player.percent_owned,
-                "on_team": team.team_name,
-            })
+            add(player, team.team_name)
+    # Pre-draft every player is a free agent; mid-season the pool is the
+    # waiver wire. Either way rankings cover the whole draftable pool.
+    try:
+        for player in league.free_agents(size=400):
+            add(player, None)
+    except Exception:
+        pass
 
     rankings.sort(key=lambda x: x["projected_points"], reverse=True)
     return rankings

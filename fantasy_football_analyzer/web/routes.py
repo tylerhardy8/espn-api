@@ -892,11 +892,14 @@ def _build_draft_state(league, config):
         try:
             from .helpers import get_league_intel_cached
             from ..league_intel import positional_premiums, apply_market_values
+            from ..auction import league_profile
             intel = get_league_intel_cached(config)
-            premiums = positional_premiums(intel, pool, len(league.teams), roster_size or 16)
+            profile = league_profile(league)
+            core_size = profile.get("core_size") or roster_size or 16
+            premiums = positional_premiums(intel, pool, len(league.teams), core_size)
             apply_market_values(pool, premiums, len(league.teams),
                                 budget or getattr(league.settings, "auction_budget", 0) or 200,
-                                roster_size or 16, intel=intel)
+                                core_size, intel=intel)
         except Exception:
             premiums = {}
     else:
@@ -1016,6 +1019,14 @@ def api_draft_state():
             if state.is_auction:
                 payload["cash_rich"] = payload["budgets"][:3]
                 payload["nominate_next"] = nomination_candidates(state, team_name)
+                if team_name:
+                    try:
+                        from ..plan import build_budget_plan
+                        from .helpers import get_league_intel_cached
+                        payload["plan"] = build_budget_plan(
+                            state, team_name, intel=get_league_intel_cached(config))
+                    except Exception:
+                        payload["plan"] = None
             try:
                 from ..sources import get_sources_status
                 payload["sources"] = get_sources_status()

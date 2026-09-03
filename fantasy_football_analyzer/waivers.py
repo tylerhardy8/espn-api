@@ -119,7 +119,9 @@ def get_waiver_recommendations(league, my_team_name=None, week=None):
         weakest_at_pos = {}
         for pos, players in roster_by_pos.items():
             if players:
-                weakest = min(players, key=lambda p: p.total_points)
+                # Compare like with like: the upgrade math below is per-game
+                # average, so the weakest player is the lowest average
+                weakest = min(players, key=lambda p: (p.avg_points or 0, p.total_points or 0))
                 weakest_at_pos[pos] = {
                     "name": weakest.name,
                     "total_points": weakest.total_points,

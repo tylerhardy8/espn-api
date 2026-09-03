@@ -171,6 +171,17 @@ function renderBoard() {
   $("board").innerHTML = rows.join("") || `<tr><td class="meta">Nothing to show.</td></tr>`;
 }
 
+function renderPlan(plan) {
+  const row = $("plan-row");
+  if (!plan || !plan.targets || !plan.targets.length) { row.hidden = true; return; }
+  row.hidden = false;
+  const items = plan.targets.slice(0, 8).map((t) =>
+    `<span class="t">${esc(t.position)} $${t.target}${t.example ? ` <span class="who">(${esc(t.example)})</span>` : ""}</span>`
+  ).join("");
+  const pace = plan.pace && plan.pace.read !== "on pace" ? `<div class="pace">${esc(plan.pace.read)}</div>` : "";
+  row.innerHTML = `Plan for ${plan.slots_left} slots (${plan.fillers} × $1 fillers): ${items}${pace}`;
+}
+
 function renderTeams(budgets) {
   const names = (budgets || []).map((b) => b.team).sort();
   if (names.join("|") === teams.join("|")) return;
@@ -215,6 +226,7 @@ function render(d) {
     ).join("") || `<div class="meta">–</div>`;
   }
   renderTeams(d.budgets);
+  renderPlan(d.plan);
 
   const alert = $("run-alert");
   if (d.active_run) {

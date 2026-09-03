@@ -428,6 +428,13 @@ def get_ai_recommendation(draft_state, my_team_name, league, model=None, intel_t
 
     if getattr(draft_state, "is_auction", False) and getattr(draft_state, "pool", None):
         context = build_auction_context(draft_state, my_team_name, league)
+        try:
+            from .plan import build_budget_plan, format_plan_for_ai
+            plan_text = format_plan_for_ai(build_budget_plan(draft_state, my_team_name))
+            if plan_text:
+                context += "\n\n" + plan_text
+        except Exception:
+            pass
         if intel_text:
             context += "\n\n" + intel_text
         system_prompt = AUCTION_SYSTEM_PROMPT + (WEB_SEARCH_PROMPT if web_search else "")
@@ -546,21 +553,14 @@ class LiveDraftAdvisor:
         """Called when a new pick is detected."""
         print(state.format_pick(pick_data))
 
-        # Check if the next pick might be ours
-        next_pick = state.pick_number + 1
-        next_team_idx = (next_pick - 1) % state.total_teams
-        round_num = ((next_pick - 1) // state.total_teams) + 1
-
-        # In snake draft, odd rounds go forward, even rounds go backward
-        if round_num % 2 == 0:
-            next_team_idx = state.total_teams - 1 - next_team_idx
-
-        teams_sorted = sorted(self.league.teams, key=lambda t: t.team_id)
-        if next_team_idx < len(teams_sorted):
-            next_team = teams_sorted[next_team_idx]
-            if next_team.team_id == self.my_team_id and self.auto_advise:
-                print(f"\n>>> YOUR PICK IS NEXT! Getting AI recommendation...")
-                self.get_recommendation()
+        # Snake: is the next pick ours? Uses the league's real draft order
+        # (settings.draft_pick_order) via the tracker's slot math.
+        if getattr(state, "is_auction", False) or not self.auto_advise:
+            return
+        upcoming = state.get_upcoming_picks(self.my_team_name, count=1)
+        if upcoming and upcoming[0] == len(state.picks) + 1:
+            print("\n>>> YOUR PICK IS NEXT! Getting AI recommendation...")
+            self.get_recommendation()
 
     def get_recommendation(self):
         """Get and display an AI recommendation for the current state."""

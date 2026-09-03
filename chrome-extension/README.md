@@ -25,6 +25,12 @@ any open ESPN draft-room tab.
 
 **The night before / morning of**
 
+0. The valuation model changed on Sep 3 (see `AUCTION_ASSISTANT_NOTES.md`). If anything
+   looks wrong on draft day, roll back to the previous image in one command:
+   ```bash
+   docker rm -f ffa; docker run -d --name ffa -p 5050:5000 -v ffa-config:/root --env-file .env ffa:pre-review
+   ```
+
 1. Docker Desktop running, container up. Check identity:
    ```bash
    curl -s localhost:5050/api/me
@@ -35,8 +41,9 @@ any open ESPN draft-room tab.
    present.
 3. Confirm the draft rules the app sees: open `localhost:5050/api/draft-state`
    — `is_auction: true`, and each team's `remaining` equals the league budget.
-4. **Clear marks** (panel → Settings → Clear marks) if you ran a mock draft or
-   the badge shows a stale count.
+4. **MOCK badge off** in the panel header (Settings → untick Mock rehearsal mode) and
+   **Clear marks** if the badge shows a stale count. Mock marks live on their own board,
+   but the mode is remembered across restarts.
 
 **15 minutes before**
 
@@ -53,10 +60,14 @@ any open ESPN draft-room tab.
   Off by a few? Open ESPN's Pick History panel — the scraper backfills with
   prices. Last resort: type a price in the row's `$` box and press **×** (set
   the buying team in "× marks to"). Cmd/Ctrl+Z undoes your last manual mark.
-- **On the block**: shows the nominated player, high bid + bidder, and a
-  BID/PASS verdict with your suggested max (inflation-adjusted value × need,
-  capped at your max bid). If the feed misses a nomination, type the name and
-  current high bid and press **set**.
+- **On the block**: shows the nominated player, high bid + bidder, the clock, and a
+  BID / STRETCH / PASS verdict with the reason: model value, this room's market price,
+  how many comparable players remain, what the player adds to *your* lineup, availability
+  (injury / suspension haircut), bye collisions with your own picks, the player's last two
+  sale prices here, and a read on the high bidder's habits. If the feed misses a
+  nomination, type the name and current high bid and press **set**.
+- **Plan row** (under the budget): target spend for each open slot from your remaining cash
+  and needs, with an example player at that price, plus a pace read.
 - **Advise now** asks Claude (with a live-news web search when "news" is
   ticked); **auto** re-advises as picks land (throttled to 90s, no search).
 - Don't restart the container mid-draft: marks persist on disk, but the pool

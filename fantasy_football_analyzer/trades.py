@@ -10,19 +10,47 @@ Provides:
 from collections import defaultdict
 
 
-def _player_value(player):
-    """A player's trade value: actual points once games are played,
-    season projection before that (post-draft, totals are all zero)."""
+def _player_value(player, league=None):
+    """A player's trade value: rest-of-season points.
+
+    Pre-season this is the season projection. In-season it prorates the
+    projection over the weeks left, blends in actual pace, weights the
+    league's playoff weeks, and scales by availability (see ros.py) — so a
+    player who banked points and is now hurt is worth what he'll score, not
+    what he scored.
+    """
+    if league is not None:
+        try:
+            from .ros import ros_projection
+            return ros_projection(player, league)
+        except Exception:
+            pass
     total = getattr(player, "total_points", 0) or 0
     if total > 0:
         return total
     return getattr(player, "projected_total_points", 0) or 0
 
 
-def evaluate_roster_strength(team):
+def _profile(league):
+    """Lineup slot profile for a league (legacy LINEUP_SLOTS when unknown)."""
+    try:
+        from .auction import league_profile
+        prof = league_profile(league) if league is not None else None
+    except Exception:
+        prof = None
+    if prof:
+        return prof
+    from .lineup import profile_from_targets
+    prof = profile_from_targets(dict(LINEUP_SLOTS))
+    prof["flex"] = [(FLEX_POSITIONS, FLEX_COUNT)]
+    return prof
+
+
+def evaluate_roster_strength(team, league=None):
     """Evaluate a team's roster by position, returning strength scores.
 
     Returns a dict with position -> {"starters": [...], "bench": [...], "total_points": float}
+    Starter counts come from the league's real lineup slots when a league is given.
     """
     by_position = defaultdict(list)
     for player in team.roster:
@@ -33,7 +61,7 @@ def evaluate_roster_strength(team):
             "projected_points": player.projected_total_points,
             "avg_points": player.avg_points,
             "slot": player.lineupSlot,
-            "value": round(_player_value(player), 1),
+            "value": round(_player_value(player, league), 1),
         })
 
     # Sort by trade value within each position
@@ -41,7 +69,8 @@ def evaluate_roster_strength(team):
         by_position[pos].sort(key=lambda x: x["value"], reverse=True)
 
     strengths = {}
-    starter_counts = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "D/ST": 1, "K": 1}
+    starter_counts = dict(_profile(league)["fixed"]) if league is not None else \
+        {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "D/ST": 1, "K": 1}
 
     for pos, players in by_position.items():
         num_starters = starter_counts.get(pos, 1)
@@ -67,12 +96,12 @@ def identify_team_needs(team, league):
 
     Returns positions sorted by need (most needed first).
     """
-    team_strength = evaluate_roster_strength(team)
+    team_strength = evaluate_roster_strength(team, league)
 
     # Get league averages by position
     league_avgs = defaultdict(list)
     for t in league.teams:
-        strengths = evaluate_roster_strength(t)
+        strengths = evaluate_roster_strength(t, league)
         for pos, data in strengths.items():
             league_avgs[pos].append(data["starter_points"])
 
@@ -81,7 +110,9 @@ def identify_team_needs(team, league):
         avg_by_pos[pos] = sum(points_list) / len(points_list) if points_list else 0
 
     needs = []
-    for pos in ["QB", "RB", "WR", "TE", "D/ST", "K"]:
+    positions = [p for p in ("QB", "RB", "WR", "TE", "D/ST", "K") if p in _profile(league)["fixed"]] \
+        or ["QB", "RB", "WR", "TE", "D/ST", "K"]
+    for pos in positions:
         team_pts = team_strength.get(pos, {}).get("starter_points", 0)
         league_avg = avg_by_pos.get(pos, 0)
         deficit = round(league_avg - team_pts, 2)
@@ -98,19 +129,31 @@ def identify_team_needs(team, league):
     return needs
 
 
-def evaluate_trade(team_a, players_give, team_b, players_receive):
+def evaluate_trade(team_a, players_give, team_b, players_receive, league=None):
     """Evaluate trade fairness between two teams.
 
     players_give: list of player names from team_a
     players_receive: list of player names from team_b
-    Returns analysis dict with fairness assessment.
+    With a league, each player counts as value over positional replacement
+    (so a 2-for-1 of bench pieces doesn't beat one star). Returns analysis
+    dict with fairness assessment.
     """
+    repl = {}
+    if league is not None:
+        try:
+            repl = _replacement_levels(league)
+        except Exception:
+            repl = {}
+
+    def worth(player):
+        return max(0.0, _player_value(player, league) - repl.get(player.position, 0.0))
+
     give_value = 0
     give_details = []
     for name in players_give:
         for player in team_a.roster:
             if player.name.lower() == name.lower():
-                give_value += _player_value(player)
+                give_value += worth(player)
                 give_details.append({
                     "name": player.name,
                     "position": player.position,
@@ -125,7 +168,7 @@ def evaluate_trade(team_a, players_give, team_b, players_receive):
     for name in players_receive:
         for player in team_b.roster:
             if player.name.lower() == name.lower():
-                receive_value += _player_value(player)
+                receive_value += worth(player)
                 receive_details.append({
                     "name": player.name,
                     "position": player.position,
@@ -167,67 +210,36 @@ FLEX_COUNT = 1
 BENCH_WEIGHTS = (0.18, 0.10, 0.05, 0.02)
 
 
-def _team_players(team):
+def _team_players(team, league=None):
     return [
         {"name": p.name, "player_id": p.playerId, "position": p.position,
-         "value": round(_player_value(p), 1)}
+         "value": round(_player_value(p, league), 1)}
         for p in team.roster
     ]
 
 
-def lineup_value(players):
+def lineup_value(players, profile=None):
     """Total value of the optimal starting lineup (fixed slots + flex)."""
-    by_pos = defaultdict(list)
-    for p in players:
-        by_pos[p["position"]].append(p["value"])
-    total = 0.0
-    flex_pool = []
-    for pos, values in by_pos.items():
-        values.sort(reverse=True)
-        n = LINEUP_SLOTS.get(pos, 0)
-        total += sum(values[:n])
-        if pos in FLEX_POSITIONS:
-            flex_pool.extend(values[n:])
-    flex_pool.sort(reverse=True)
-    total += sum(flex_pool[:FLEX_COUNT])
-    return total
+    from .lineup import optimal_lineup_value
+    return optimal_lineup_value(players, profile or _profile(None))
 
 
-def team_context_value(players):
+def team_context_value(players, profile=None):
     """What this roster is actually worth to its owner: the optimal starting
     lineup, plus depth weighted for insurance value (diminishing by depth).
 
     This is the engine's core quantity. A player's value *to a specific team*
     is the change in this number — which differs between rosters, and that
-    difference is exactly why trades happen at all.
+    difference is exactly why trades happen at all. Slots come from the
+    league's real lineup (lineup.slot_profile) when a profile is given.
     """
-    by_pos = defaultdict(list)
-    for p in players:
-        by_pos[p["position"]].append(p["value"])
-    total = 0.0
-    flex_pool = []
-    for pos, values in by_pos.items():
-        values.sort(reverse=True)
-        n = LINEUP_SLOTS.get(pos, 0)
-        total += sum(values[:n])
-        if pos in FLEX_POSITIONS:
-            flex_pool.extend(values[n:])
-    flex_pool.sort(reverse=True)
-    total += sum(flex_pool[:FLEX_COUNT])
-    # Remaining core-position players are insurance, with diminishing returns
-    bench = flex_pool[FLEX_COUNT:]
-    for pos, values in by_pos.items():
-        if pos not in FLEX_POSITIONS and pos in TRADE_CORE_POSITIONS:
-            bench.extend(values[LINEUP_SLOTS.get(pos, 0):])
-    bench.sort(reverse=True)
-    for i, v in enumerate(bench[:len(BENCH_WEIGHTS)]):
-        total += BENCH_WEIGHTS[i] * v
-    return total
+    from .lineup import team_context_value as _ctx
+    return _ctx(players, profile or _profile(None), BENCH_WEIGHTS)
 
 
-def _context_after(players, give_ids, get_players):
+def _context_after(players, give_ids, get_players, profile=None):
     after = [p for p in players if p["player_id"] not in give_ids] + list(get_players)
-    return team_context_value(after)
+    return team_context_value(after, profile)
 
 
 def _replacement_levels(league):
@@ -239,13 +251,13 @@ def _replacement_levels(league):
     for t in league.teams:
         for p in t.roster:
             if p.position in TRADE_CORE_POSITIONS:
-                pools[p.position].append(_player_value(p))
-    flex_share = {"RB": 0.5, "WR": 0.4, "TE": 0.1}
+                pools[p.position].append(_player_value(p, league))
+    starter_targets = _profile(league)["starter_targets"]
     n = len(league.teams)
     repl = {}
     for pos, vals in pools.items():
         vals.sort(reverse=True)
-        idx = max(1, int(n * (LINEUP_SLOTS.get(pos, 1) + flex_share.get(pos, 0))))
+        idx = max(1, int(round(n * starter_targets.get(pos, 1.0))))
         repl[pos] = vals[idx - 1] if idx <= len(vals) else vals[-1]
     return repl
 
@@ -301,8 +313,9 @@ def find_trade_matches(my_team, league, pool=None, max_partners=6,
     def market(p):
         return _market_value(p, pool.get(p["player_id"]), replacement)
 
-    mine = _team_players(my_team)
-    my_base = team_context_value(mine)
+    profile = _profile(league)
+    mine = _team_players(my_team, league)
+    my_base = team_context_value(mine, profile)
 
     def candidates(players):
         core = sorted(
@@ -311,12 +324,12 @@ def find_trade_matches(my_team, league, pool=None, max_partners=6,
         )[:10]
         # Package pairs from the lower-marginal half — the pieces an owner
         # would actually double up to move
-        base = team_context_value(players)
+        base = team_context_value(players, profile)
         marginals = sorted(
             core,
             key=lambda p: base - team_context_value(
                 [q for q in players if q["player_id"] != p["player_id"]]
-            ),
+            , profile),
         )[:6]
         pairs = []
         for i in range(len(marginals)):
@@ -331,8 +344,8 @@ def find_trade_matches(my_team, league, pool=None, max_partners=6,
     for other in league.teams:
         if other.team_id == my_team.team_id:
             continue
-        theirs = _team_players(other)
-        their_base = team_context_value(theirs)
+        theirs = _team_players(other, league)
+        their_base = team_context_value(theirs, profile)
         their_packages = candidates(theirs)
 
         proposals = []
@@ -345,10 +358,10 @@ def find_trade_matches(my_team, league, pool=None, max_partners=6,
                 get_ids = {g["player_id"] for g in get_list}
                 get_market = sum(market(g) for g in get_list)
 
-                my_gain = _context_after(mine, give_ids, get_list) - my_base
+                my_gain = _context_after(mine, give_ids, get_list, profile) - my_base
                 if my_gain < 3:
                     continue
-                their_gain = _context_after(theirs, get_ids, give_list) - their_base
+                their_gain = _context_after(theirs, get_ids, give_list, profile) - their_base
                 # Ratio of market value THEY receive vs give
                 ratio = give_market / max(get_market, 1e-6)
                 accept = _acceptance(their_gain, ratio)
