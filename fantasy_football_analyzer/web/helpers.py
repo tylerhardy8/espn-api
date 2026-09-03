@@ -119,6 +119,42 @@ def get_league_intel(config):
     return intel
 
 
+_intel_building = set()
+
+
+def _intel_key(config):
+    league_cfg = get_league_config(config)
+    return f"{league_cfg.get('league_id')}_{config.get('year', 2025)}"
+
+
+def get_league_intel_cached(config):
+    """The intel profile if already built (never blocks); else None."""
+    cached = _intel_cache.get(_intel_key(config))
+    if cached and time.time() - cached[1] < _INTEL_TTL:
+        return cached[0]
+    return None
+
+
+def warm_league_intel(config):
+    """Build the intel profile in a background thread (idempotent)."""
+    import threading
+
+    key = _intel_key(config)
+    if get_league_intel_cached(config) is not None or key in _intel_building:
+        return
+    _intel_building.add(key)
+
+    def run():
+        try:
+            get_league_intel(config)
+        except Exception:
+            pass
+        finally:
+            _intel_building.discard(key)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def clear_league_cache():
     """Clear the cached league connections."""
     _league_cache.clear()

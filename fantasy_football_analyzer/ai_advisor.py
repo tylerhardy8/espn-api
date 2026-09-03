@@ -48,21 +48,11 @@ def _league_settings_info(league, summary):
     if hasattr(league.settings, "name"):
         settings_info.append(f"League: {league.settings.name}")
     settings_info.append(f"Teams: {summary['teams']}")
-    if hasattr(league.settings, "scoring_format") and league.settings.scoring_format:
-        # Check for PPR
-        ppr_items = [s for s in league.settings.scoring_format
-                     if s.get("label", "").lower() == "each reception"
-                     or s.get("abbr", "").upper() == "REC"]
-        if ppr_items:
-            ppr_val = ppr_items[0].get("points", 0)
-            if ppr_val == 1:
-                settings_info.append("Scoring: Full PPR")
-            elif ppr_val == 0.5:
-                settings_info.append("Scoring: Half PPR")
-            else:
-                settings_info.append(f"Scoring: {ppr_val} PPR")
-        else:
-            settings_info.append("Scoring: Standard (non-PPR)")
+    try:
+        from .sources import describe_scoring
+        settings_info.append(f"Scoring: {describe_scoring(league)}")
+    except Exception:
+        pass
 
     if hasattr(league.settings, "position_slot_counts"):
         slots = league.settings.position_slot_counts

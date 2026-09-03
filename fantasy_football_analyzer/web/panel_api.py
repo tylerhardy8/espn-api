@@ -14,7 +14,12 @@ from ..marks import store as mark_store
 from ..trades import identify_team_needs, find_trade_matches
 from ..waivers import get_waiver_recommendations, find_streamers, get_top_free_agents
 from ..rss_news import fetch_news, match_news_to_players
-from .helpers import get_league_or_redirect, get_valued_pool, get_ai_key, ai_available
+from .helpers import (
+    get_league_or_redirect, get_valued_pool, get_ai_key, ai_available,
+    get_league_intel_cached, warm_league_intel,
+)
+from ..league_intel import rival_profile, league_price
+from ..historical import get_manager_key
 from .routes import bp, _build_draft_state, trade_ai_advice, waiver_ai_advice
 
 
@@ -276,14 +281,38 @@ def _auction_payload(live, league, config, pool, team_name):
         need_mult = 1.0 if needs.get(pos, 0) > 0 else 0.6
         adjusted = entry.get("value", 1.0) * inflation
         suggested = int(min(my_max, max(1, round(adjusted * need_mult))))
+
+        # League history: what this room has actually paid for a buy of this
+        # rank at this position, and how the current high bidder tends to bid
+        intel = get_league_intel_cached(config)
+        if intel is None:
+            warm_league_intel(config)
+        hist_price = league_price(intel, pos, entry.get("pos_rank"), state.budget)
+        rival = None
+        bidder_id = live.get("high_bidder")
+        if intel and bidder_id is not None and bidder_id != live.get("my_team_id"):
+            team_obj = next((t for t in league.teams if t.team_id == bidder_id), None)
+            if team_obj is not None:
+                rival = rival_profile(intel, get_manager_key(team_obj)[0], pos)
+        expect = None
+        if hist_price:
+            expect = max(hist_price, int(round(adjusted)))
+            if rival and rival.get("pos_ratio") and rival["pos_ratio"] > 1:
+                expect = int(round(expect * min(1.5, rival["pos_ratio"])))
+
         out.update({
             "name": entry["name"], "position": pos, "team": entry.get("team", ""),
-            "tier": entry.get("tier"), "value": entry.get("value"),
+            "tier": entry.get("tier"), "pos_rank": entry.get("pos_rank"),
+            "value": entry.get("value"),
             "espn_value": entry.get("espn_value"), "adjusted_value": round(adjusted, 1),
             "inflation": inflation, "need": needs.get(pos, 0) > 0,
             "my_max_bid": my_max, "suggested_max_bid": suggested,
             "verdict": ("bid" if live["high_bid"] < suggested else "pass"),
             "already_drafted": pid in state.drafted_ids,
+            "league_price": hist_price,
+            "expected_price": expect,
+            "rival": rival,
+            "intel_ready": intel is not None,
         })
     except Exception as e:
         out["error"] = str(e)

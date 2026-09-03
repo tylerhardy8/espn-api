@@ -141,20 +141,68 @@ def fetch_sleeper_trending(lookback_hours=24, limit=50):
 # FantasyPros
 # ---------------------------------------------------------------------------
 
+# ESPN player position ids used as keys in scoringItems[].pointsOverrides
+_POS_IDS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "D/ST"}
+_RECEPTION_STAT = 53
+
+
+def reception_scoring(league):
+    """Points per reception: {"base": float, "by_pos": {"RB": 1.0, "TE": 1.5, ...}}.
+
+    ESPN can express PPR either as a flat `points` value or entirely through
+    per-position `pointsOverrides` (base 0) — the espn_api settings parser only
+    reads the D/ST override, so we go to the raw scoring items.
+    """
+    raw = getattr(league.settings, "_raw_scoring_settings", None) or {}
+    for item in raw.get("scoringItems", []) or []:
+        if item.get("statId") != _RECEPTION_STAT:
+            continue
+        base = float(item.get("points") or 0)
+        by_pos = {}
+        for pid, pts in (item.get("pointsOverrides") or {}).items():
+            pos = _POS_IDS.get(int(pid)) if str(pid).isdigit() else None
+            if pos:
+                by_pos[pos] = float(pts or 0)
+        return {"base": base, "by_pos": by_pos}
+    # Fallback: parsed scoring_format (flat points only)
+    for item in getattr(league.settings, "scoring_format", None) or []:
+        if (item.get("label") or "").lower() == "each reception" or (item.get("abbr") or "").upper() == "REC":
+            return {"base": float(item.get("points") or 0), "by_pos": {}}
+    return {"base": 0.0, "by_pos": {}}
+
+
+def _core_reception_points(league):
+    """Reception points that matter for rankings (RB/WR, else the base)."""
+    rec = reception_scoring(league)
+    core = [rec["by_pos"][p] for p in ("RB", "WR") if p in rec["by_pos"]]
+    return max(core) if core else rec["base"]
+
+
 def detect_scoring(league):
     """'PPR' | 'HALF' | 'STD' from the league's scoring rules."""
-    fmt = getattr(league.settings, "scoring_format", None) or []
-    for item in fmt:
-        label = (item.get("label") or "").lower()
-        abbr = (item.get("abbr") or "").upper()
-        if label == "each reception" or abbr == "REC":
-            pts = item.get("points", 0) or 0
-            if pts >= 1:
-                return "PPR"
-            if pts > 0:
-                return "HALF"
-            return "STD"
+    pts = _core_reception_points(league)
+    if pts >= 1:
+        return "PPR"
+    if pts > 0:
+        return "HALF"
     return "STD"
+
+
+def describe_scoring(league):
+    """Human label, e.g. 'Full PPR (TE premium: 1.5/rec)' or 'Standard (non-PPR)'."""
+    rec = reception_scoring(league)
+    pts = _core_reception_points(league)
+    if pts >= 1:
+        label = "Full PPR" if pts == 1 else f"{pts:g} PPR"
+    elif pts > 0:
+        label = "Half PPR" if pts == 0.5 else f"{pts:g} PPR"
+    else:
+        label = "Standard (non-PPR)"
+    extras = [f"{pos} {v:g}/rec" for pos, v in rec["by_pos"].items()
+              if pos in ("TE", "QB") and v and v != pts]
+    if extras:
+        label += " (" + ", ".join(extras) + " premium)" if any(v > pts for pos, v in rec["by_pos"].items() if pos in ("TE", "QB")) else " (" + ", ".join(extras) + ")"
+    return label
 
 
 def fetch_fantasypros_rankings(year, scoring="PPR", api_key=None):

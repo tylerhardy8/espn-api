@@ -915,6 +915,12 @@ def api_draft_state():
     team_name = request.args.get("team") or config.get("team_name")
 
     try:
+        from .helpers import warm_league_intel
+        warm_league_intel(config)  # history for the on-block card + advice, off-thread
+    except Exception:
+        pass
+
+    try:
         state = _build_draft_state(league, config)
 
         summary = state.get_board_summary()

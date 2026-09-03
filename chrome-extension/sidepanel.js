@@ -292,7 +292,24 @@ function renderBlock(b) {
       <span>High bid <strong>$${b.high_bid}</strong>${b.high_bidder ? ` <span class="who ${b.high_bidder_is_me ? "me" : ""}">— ${b.high_bidder_is_me ? "YOU" : esc(b.high_bidder)}</span>` : ""} ${clockHtml(b)}</span>
       ${verdict}
     </div>
-    <div class="meta">value $${b.value} · adj $${b.adjusted_value} · crowd $${b.espn_value ?? "–"} · my max $${b.my_max_bid}</div>`;
+    <div class="meta">value $${b.value} · adj $${b.adjusted_value} · crowd $${b.espn_value ?? "–"} · my max $${b.my_max_bid}</div>
+    ${historyHtml(b)}`;
+}
+
+function historyHtml(b) {
+  if (!b.intel_ready) return `<div class="meta">league history loading…</div>`;
+  const lines = [];
+  if (b.league_price) {
+    const rank = b.pos_rank ? `${esc(b.position)}${b.pos_rank}` : esc(b.position);
+    const hot = b.league_price > b.suggested_max_bid;
+    lines.push(`<div class="hist ${hot ? "hot" : ""}">This league pays ~<strong>$${b.league_price}</strong> for the ${rank}${hot ? " — above the model" : ""}</div>`);
+  }
+  if (b.rival && b.rival.tags && b.rival.tags.length) {
+    lines.push(`<div class="hist ${b.rival.runs_hot ? "hot" : ""}">⚠ ${esc(b.rival.manager)} ${esc(b.rival.tags.join(", "))}${b.expected_price ? ` — expect $${b.expected_price}+` : ""}</div>`);
+  } else if (b.expected_price && b.expected_price > b.high_bid) {
+    lines.push(`<div class="hist">Likely to run to ~$${b.expected_price}</div>`);
+  }
+  return lines.join("");
 }
 
 async function pollBlock() {

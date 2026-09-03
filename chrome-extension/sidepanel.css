@@ -223,3 +223,5 @@ button.danger { border-color: rgba(224, 82, 82, 0.5); color: #ff8a8a; }
 .block-body .clock { font-weight: 700; color: var(--gold); }
 .block-body .clock.low { color: var(--red); }
 .block-body .me { color: var(--gold); font-weight: 700; }
+.block-body .hist { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.block-body .hist.hot { color: var(--gold); }

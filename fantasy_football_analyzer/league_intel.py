@@ -38,6 +38,12 @@ def build_league_intel(leagues_by_year):
     league_total_spend = 0.0
     champion_profiles = []
     top_sales = []
+    # Price history: per season, the sale prices at each position ranked
+    # high→low, and dollars/points per position — the league's own price curve
+    pos_price_years = defaultdict(list)   # pos -> [[prices desc] per season]
+    pos_dollars = defaultdict(float)
+    pos_points = defaultdict(float)
+    team_spend_years = []                 # avg dollars spent per team, per season
 
     for year, league in leagues_by_year.items():
         # Results + activity
@@ -74,6 +80,17 @@ def build_league_intel(leagues_by_year):
             bids = sorted((p.bid_amount for p in league.draft), reverse=True)
             if bids:
                 top_sales.append(bids[0])
+            season_prices = defaultdict(list)
+            for pick in league.draft:
+                total_points, _avg, position = stats_map.get(pick.playerId, (0, 0, ""))
+                if position and pick.bid_amount:
+                    season_prices[position].append(pick.bid_amount)
+                    pos_dollars[position] += pick.bid_amount
+                    pos_points[position] += max(0.0, total_points or 0.0)
+            for pos, prices in season_prices.items():
+                pos_price_years[pos].append(sorted(prices, reverse=True))
+            if league.teams:
+                team_spend_years.append(sum(bids) / len(league.teams))
 
         if champion is not None:
             champ_style = year_styles.get(_manager_of(champion))
@@ -98,6 +115,15 @@ def build_league_intel(leagues_by_year):
         if name in managers:
             managers[name]["luck_delta"] = r["luck_delta"]
 
+    pos_price_curve = {}
+    for pos, seasons in pos_price_years.items():
+        depth = max(len(x) for x in seasons)
+        curve = []
+        for i in range(depth):
+            vals = [x[i] for x in seasons if len(x) > i]
+            curve.append(round(sum(vals) / len(vals), 1))
+        pos_price_curve[pos] = curve
+
     league_summary = {
         "pos_spend_share": {
             pos: round(amt / league_total_spend, 3)
@@ -105,7 +131,24 @@ def build_league_intel(leagues_by_year):
         } if league_total_spend else {},
         "avg_top_sale": round(sum(top_sales) / len(top_sales), 1) if top_sales else None,
         "champion_profiles": champion_profiles,
+        # Avg sale price of the Nth most expensive buy at each position
+        "pos_price_curve": pos_price_curve,
+        # Dollars paid per fantasy point delivered, by position
+        "pos_price_per_point": {
+            pos: round(pos_dollars[pos] / pos_points[pos], 3)
+            for pos in pos_dollars if pos_points[pos] > 0
+        },
+        "avg_team_spend": (round(sum(team_spend_years) / len(team_spend_years), 1)
+                           if team_spend_years else None),
     }
+    # Per-manager positional share of their own budget (vs the league's share)
+    for name, m in managers.items():
+        style = m.get("draft_style")
+        if style and style.get("is_auction") and style.get("avg_total_spent"):
+            style["pos_share"] = {
+                pos: round(amt / style["avg_total_spent"], 3)
+                for pos, amt in style["avg_pos_spend"].items()
+            }
 
     return {"years": years, "league": league_summary, "managers": dict(managers)}
 
@@ -263,3 +306,66 @@ def format_intel_for_ai(intel, my_manager=None):
         "of surplus, and expect runs at positions this league historically overspends on."
     )
     return "\n".join(lines)
+
+
+def rival_profile(intel, manager, position):
+    """How a manager bids at a position vs the league: {"tag", "pos_ratio", ...}.
+
+    pos_ratio > 1 means they put a bigger share of their budget into that
+    position than the league does; ppp_ratio > 1 means they pay more per
+    point delivered than the league average (an overpayer in general).
+    """
+    if not intel or not manager:
+        return None
+    m = (intel.get("managers") or {}).get(manager)
+    style = (m or {}).get("draft_style") or {}
+    if not style.get("is_auction"):
+        return None
+    league = intel.get("league") or {}
+    league_share = (league.get("pos_spend_share") or {}).get(position)
+    my_share = (style.get("pos_share") or {}).get(position)
+    pos_ratio = round(my_share / league_share, 2) if my_share and league_share else None
+
+    ppp_all = [x["draft_style"]["avg_price_per_point"] for x in intel["managers"].values()
+               if x.get("draft_style") and x["draft_style"].get("avg_price_per_point")]
+    ppp_ratio = None
+    if ppp_all and style.get("avg_price_per_point"):
+        ppp_ratio = round(style["avg_price_per_point"] / (sum(ppp_all) / len(ppp_all)), 2)
+
+    tags = []
+    if pos_ratio and pos_ratio >= 1.15:
+        tags.append(f"overspends at {position} ({(pos_ratio - 1) * 100:+.0f}% vs league)")
+    elif pos_ratio and pos_ratio <= 0.85:
+        tags.append(f"light at {position} ({(pos_ratio - 1) * 100:+.0f}% vs league)")
+    if ppp_ratio and ppp_ratio >= 1.15:
+        tags.append("pays above value in general")
+    elif ppp_ratio and ppp_ratio <= 0.85:
+        tags.append("bargain hunter")
+    if style.get("avg_top3_share", 0) >= 0.5:
+        tags.append(f"stars-and-scrubs ({style['avg_top3_share'] * 100:.0f}% on top 3)")
+    return {
+        "manager": manager,
+        "pos_ratio": pos_ratio,
+        "ppp_ratio": ppp_ratio,
+        "top3_share": style.get("avg_top3_share"),
+        "signature_buys": style.get("signature_buys") or [],
+        "tags": tags,
+        "runs_hot": bool((pos_ratio and pos_ratio >= 1.15) or (ppp_ratio and ppp_ratio >= 1.15)),
+    }
+
+
+def league_price(intel, position, pos_rank, budget):
+    """What this league has historically paid for the Nth-ranked buy at a
+    position, scaled to the current budget. None without auction history."""
+    if not intel or not position or not pos_rank:
+        return None
+    league = intel.get("league") or {}
+    curve = (league.get("pos_price_curve") or {}).get(position)
+    if not curve:
+        return None
+    idx = min(len(curve), max(1, int(pos_rank))) - 1
+    price = curve[idx]
+    hist_budget = league.get("avg_team_spend")
+    if hist_budget and budget:
+        price = price * (budget / hist_budget)
+    return max(1, int(round(price)))
