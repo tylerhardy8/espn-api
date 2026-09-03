@@ -162,7 +162,9 @@ function renderBoard() {
         <span class="name">${esc(e.name)}</span><span class="pos">${esc(e.position)}</span>
         ${flags(e)}
       </td>
-      <td class="val">${isAuction ? "$" + Math.round(e.adjusted_value) : "T" + e.tier + " · " + Math.round(e.projected_points)}</td>
+      <td class="val">${isAuction
+        ? `$${Math.round(e.adjusted_value)}${e.market_price ? `<span class="mkt" title="Likely price in this league">$${Math.round(e.market_price)}</span>` : ""}`
+        : "T" + e.tier + " · " + Math.round(e.projected_points)}</td>
     </tr>`);
   $("board").innerHTML = rows.join("") || `<tr><td class="meta">Nothing to show.</td></tr>`;
 }
@@ -182,6 +184,10 @@ function render(d) {
   const s = d.summary;
   $("picks").textContent = s.total_picks;
   isAuction = !!d.is_auction;
+  if (d.mock !== undefined) {
+    $("mock-badge").hidden = !d.mock;
+    $("mock-mode").checked = !!d.mock;
+  }
 
   if (d.my_slot) {
     $("slot-row").hidden = false;
@@ -194,6 +200,7 @@ function render(d) {
       $("remaining").textContent = "$" + mine.remaining;
       $("max-bid").textContent = "$" + mine.max_bid;
       $("inflation").textContent = (d.inflation ?? 1).toFixed(2) + "×";
+      $("board-legend").hidden = !d.market_inflation;
     }
     $("block-card").hidden = false;
     $("auction-intel").hidden = false;
@@ -284,7 +291,9 @@ function renderBlock(b) {
   }
   const verdict = b.verdict === "bid"
     ? `<span class="verdict bid">BID · up to $${b.suggested_max_bid}</span>`
-    : `<span class="verdict pass">PASS · worth $${b.suggested_max_bid}</span>`;
+    : b.verdict === "stretch"
+      ? `<span class="verdict stretch">STRETCH · up to $${b.stretch_cap}</span>`
+      : `<span class="verdict pass">PASS · worth $${b.suggested_max_bid}</span>`;
   $("block-body").innerHTML = `
     <div class="big">${esc(b.name)}<span class="pos">${esc(b.position)}</span>
       ${b.need ? "" : `<span class="flag">position filled</span>`}${b.already_drafted ? `<span class="flag out">already tracked</span>` : ""}</div>
@@ -292,7 +301,8 @@ function renderBlock(b) {
       <span>High bid <strong>$${b.high_bid}</strong>${b.high_bidder ? ` <span class="who ${b.high_bidder_is_me ? "me" : ""}">— ${b.high_bidder_is_me ? "YOU" : esc(b.high_bidder)}</span>` : ""} ${clockHtml(b)}</span>
       ${verdict}
     </div>
-    <div class="meta">value $${b.value} · adj $${b.adjusted_value} · crowd $${b.espn_value ?? "–"} · my max $${b.my_max_bid}</div>
+    ${b.reason ? `<div class="reason">${esc(b.reason)}</div>` : ""}
+    <div class="meta">model $${b.adjusted_value}${b.market_price ? ` · market $${b.market_price}` : ""} · crowd $${b.espn_value ?? "–"} · my max $${b.my_max_bid}${b.scarcity != null ? ` · ${b.scarcity} comparable left` : ""}</div>
     ${historyHtml(b)}`;
 }
 
@@ -497,10 +507,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("league-select").addEventListener("change", (ev) => switchLeague(ev.target.value));
   $("mock-mode").addEventListener("change", async (ev) => {
     const enabled = ev.target.checked;
-    if (!enabled && !confirm("Leave mock mode? This clears every mark on this board.")) {
-      ev.target.checked = true;
-      return;
-    }
+    // Mock marks live on their own board; switching just changes which board shows
     try { await postJson("/api/mock-mode", { enabled }); } catch (e) { /* ignore */ }
     $("mock-badge").hidden = !enabled;
     lastPickCount = -1;

@@ -100,7 +100,7 @@ def build_league_intel(leagues_by_year):
                 pos_price_years[pos].append(sorted(prices, reverse=True))
             if league.teams:
                 team_spend_years.append(sum(bids) / len(league.teams))
-            past_budget = getattr(league.settings, "auction_budget", 0) or 0
+            past_budget = getattr(getattr(league, "settings", None), "auction_budget", 0) or 0
             if past_budget:
                 budget_years.append(past_budget)
 
@@ -407,3 +407,68 @@ def player_sale_history(intel, player_id, seasons=2):
     for year in sorted(prices, reverse=True)[:seasons]:
         out.append({"year": year, **prices[year]})
     return out
+
+
+PREMIUM_MIN, PREMIUM_MAX = 0.6, 1.6
+
+
+def positional_premiums(intel, pool, num_teams, roster_size):
+    """League price premium per position: share of dollars this league has
+    historically put on a position divided by the share the value model
+    allocates to it. > 1 means the room pays above model there.
+
+    Both shares are computed over the same positions (those present in both
+    the history and the rosterable pool) so IDP/other slots don't skew it.
+    """
+    if not intel or not pool:
+        return {}
+    league_share = ((intel.get("league") or {}).get("pos_spend_share")) or {}
+    if not league_share:
+        return {}
+    top_n = max(1, int(num_teams) * int(roster_size))
+    ranked = sorted(pool.values(), key=lambda e: e.get("value", 1.0), reverse=True)[:top_n]
+    model_dollars = {}
+    for e in ranked:
+        pos = e.get("position")
+        if pos:
+            model_dollars[pos] = model_dollars.get(pos, 0.0) + max(1.0, e.get("value", 1.0))
+    grand = sum(model_dollars.values()) or 1.0
+    # Only positions the model actually prices (IDP/K-sized slivers would
+    # produce meaningless multipliers)
+    common = [pos for pos in model_dollars
+              if league_share.get(pos) and pos in CORE_POSITIONS
+              and model_dollars[pos] / grand >= 0.02]
+    if not common:
+        return {}
+    model_total = sum(model_dollars[pos] for pos in common) or 1.0
+    league_total = sum(league_share[pos] for pos in common) or 1.0
+    premiums = {}
+    for pos in common:
+        model_pct = model_dollars[pos] / model_total
+        league_pct = league_share[pos] / league_total
+        if model_pct > 0:
+            premiums[pos] = round(min(PREMIUM_MAX, max(PREMIUM_MIN, league_pct / model_pct)), 3)
+    return premiums
+
+
+def apply_market_values(pool, premiums, num_teams, budget, roster_size):
+    """Set entry["market_value"] = value x positional premium, rescaled so the
+    top rosterable market values still sum to the league's cash (the value
+    column is untouched — it stays the bargain yardstick)."""
+    if not pool:
+        return
+    if not premiums:
+        for e in pool.values():
+            e.pop("market_value", None)
+        return
+    for e in pool.values():
+        prem = premiums.get(e.get("position"), 1.0)
+        e["market_value"] = max(1.0, e.get("value", 1.0) * prem)
+    top_n = max(1, int(num_teams) * int(roster_size))
+    ranked = sorted(pool.values(), key=lambda e: e["market_value"], reverse=True)[:top_n]
+    total = sum(e["market_value"] for e in ranked)
+    target = float(num_teams) * float(budget)
+    if total > 0 and target > 0:
+        scale = target / total
+        for e in pool.values():
+            e["market_value"] = round(max(1.0, e["market_value"] * scale), 1)

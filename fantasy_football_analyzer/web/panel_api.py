@@ -86,7 +86,7 @@ _STATE_TTL = 4       # seconds; the on-block card polls faster than the board
 
 def _draft_state(league, config):
     """A DraftState reused across quick polls (rebuilt when marks change)."""
-    marks = len(mark_store.get(league.league_id))
+    marks = (len(mark_store.get(league.league_id)), mark_store.is_mock(league.league_id))
     cached = _state_cache.get(league.league_id)
     if cached and time.time() - cached[1] < _STATE_TTL and cached[2] == marks:
         return cached[0]
@@ -101,20 +101,15 @@ def _find_pid_by_name(pool, name):
     return next((p for p, e in pool.items() if normalize_name(e["name"]) == wanted), None)
 
 
-_mock_mode = {}  # league_id -> True while a mock room may drive the active board
-
-
 def mock_allowed(league_id):
-    return bool(_mock_mode.get(league_id))
+    return mark_store.is_mock(league_id)
 
 
 @bp.route("/api/mock-mode", methods=["GET", "POST", "OPTIONS"])
 def api_mock_mode():
-    """Rehearsal switch: let a mock draft room drive the active league's board.
-
-    Team ids from the mock room won't match the real league (unknown teams),
-    but nominations, bids, sales with prices, budgets, and advice all flow.
-    Turning it off wipes the marks so the real board starts clean.
+    """Rehearsal switch: let a mock draft room drive a *separate* mock board
+    for the active league. Mock marks never mix with the real board, and the
+    mode survives restarts; switching back shows the real board untouched.
     """
     if request.method == "OPTIONS":
         return ("", 204)
@@ -123,12 +118,9 @@ def api_mock_mode():
         return jsonify({"error": "Could not connect to league"}), 500
     if request.method == "POST":
         payload = request.get_json(silent=True) or {}
-        enabled = bool(payload.get("enabled"))
-        _mock_mode[league.league_id] = enabled
-        if not enabled:
-            mark_store.clear(league.league_id)
-            _auction_live.pop(league.league_id, None)
-            _state_cache.pop(league.league_id, None)
+        mark_store.set_mock(league.league_id, bool(payload.get("enabled")))
+        _auction_live.pop(league.league_id, None)
+        _state_cache.pop(league.league_id, None)
     return jsonify({"enabled": mock_allowed(league.league_id), "league_id": league.league_id})
 
 
@@ -294,11 +286,42 @@ def _auction_payload(live, league, config, pool, team_name):
             team_obj = next((t for t in league.teams if t.team_id == bidder_id), None)
             if team_obj is not None:
                 rival = rival_profile(intel, get_manager_key(team_obj)[0], pos)
+        # Market price: league-calibrated value under market inflation
+        market_value = entry.get("market_value")
+        market_price = None
+        if market_value:
+            market_price = int(round(market_value * state.get_inflation(basis="market")))
+        elif hist_price:
+            market_price = hist_price
         expect = None
-        if hist_price:
-            expect = max(hist_price, int(round(adjusted)))
+        if market_price:
+            expect = max(market_price, int(round(adjusted)))
             if rival and rival.get("pos_ratio") and rival["pos_ratio"] > 1:
                 expect = int(round(expect * min(1.5, rival["pos_ratio"])))
+
+        # Three-state verdict: BID under model value; STRETCH between model
+        # value and market price only when I need the position and few
+        # comparable players remain; PASS above market (or above my max).
+        high = live["high_bid"]
+        need = needs.get(pos, 0) > 0
+        scarce_n = state.scarcity(pid)
+        scarce = scarce_n is not None and scarce_n <= 3
+        stretch_cap = int(min(my_max, market_price)) if market_price else suggested
+        if high >= my_max:
+            verdict, reason = "pass", f"at my max bid (${my_max})"
+        elif high < suggested:
+            verdict, reason = "bid", f"under model value (${suggested})"
+        elif market_price and high < stretch_cap and need and scarce:
+            verdict = "stretch"
+            reason = (f"above model (${suggested}) but this room pays ~${market_price} and only "
+                      f"{scarce_n} comparable {pos}{'s' if scarce_n != 1 else ''} left")
+        elif market_price and high < stretch_cap and need:
+            verdict, reason = "pass", (f"above model (${suggested}); {scarce_n} comparable "
+                                       f"{pos}s remain — buy the position cheaper later")
+        elif market_price and high < stretch_cap:
+            verdict, reason = "pass", f"above model (${suggested}) and I don't need {pos}"
+        else:
+            verdict, reason = "pass", f"above market (~${market_price or suggested})"
 
         out.update({
             "name": entry["name"], "position": pos, "team": entry.get("team", ""),
@@ -307,7 +330,11 @@ def _auction_payload(live, league, config, pool, team_name):
             "espn_value": entry.get("espn_value"), "adjusted_value": round(adjusted, 1),
             "inflation": inflation, "need": needs.get(pos, 0) > 0,
             "my_max_bid": my_max, "suggested_max_bid": suggested,
-            "verdict": ("bid" if live["high_bid"] < suggested else "pass"),
+            "market_value": market_value, "market_price": market_price,
+            "stretch_cap": stretch_cap if market_price else None,
+            "scarcity": scarce_n,
+            "premium": (getattr(state, "premiums", {}) or {}).get(pos),
+            "verdict": verdict, "reason": reason,
             "already_drafted": pid in state.drafted_ids,
             "league_price": hist_price,
             "expected_price": expect,

@@ -225,3 +225,7 @@ button.danger { border-color: rgba(224, 82, 82, 0.5); color: #ff8a8a; }
 .block-body .me { color: var(--gold); font-weight: 700; }
 .block-body .hist { font-size: 11px; color: var(--muted); margin-top: 3px; }
 .block-body .hist.hot { color: var(--gold); }
+.verdict.stretch { background: rgba(255, 193, 7, 0.22); color: var(--gold); }
+.block-body .reason { font-size: 12px; margin-top: 4px; }
+.mkt { color: var(--muted); font-weight: 500; font-size: 11px; margin-left: 4px; }
+.mark-bar #board-legend .val { color: var(--blue); font-weight: 600; }

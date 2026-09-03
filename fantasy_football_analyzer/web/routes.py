@@ -885,9 +885,26 @@ def _build_draft_state(league, config):
     except Exception:
         pass
 
+    # League-calibrated market values (history-driven positional premiums);
+    # cheap and idempotent, so refreshed on every build in case intel just landed
+    if pool:
+        try:
+            from .helpers import get_league_intel_cached
+            from ..league_intel import positional_premiums, apply_market_values
+            intel = get_league_intel_cached(config)
+            premiums = positional_premiums(intel, pool, len(league.teams), roster_size or 16)
+            apply_market_values(pool, premiums, len(league.teams),
+                                budget or getattr(league.settings, "auction_budget", 0) or 200,
+                                roster_size or 16)
+        except Exception:
+            premiums = {}
+    else:
+        premiums = {}
+
     state = DraftState(
         league, pool=pool, budget=budget, targets=targets, roster_size=roster_size,
     )
+    state.premiums = premiums
     if league.draft:
         state.apply_picks(league.draft)
 
@@ -946,6 +963,7 @@ def api_draft_state():
             "team_picks": team_picks,
             "is_auction": state.is_auction,
             "synthetic": getattr(state, "synthetic_picks", False),
+            "mock": mark_store.is_mock(league.league_id),
         }
 
         if team_name and not state.is_auction:
@@ -959,6 +977,9 @@ def api_draft_state():
 
         if state.pool:
             payload["inflation"] = state.get_inflation()
+            payload["market_inflation"] = (state.get_inflation(basis="market")
+                                           if state.has_market() else None)
+            payload["premiums"] = getattr(state, "premiums", {}) or {}
             payload["budgets"] = state.get_budgets()
             payload["best_available"] = [
                 {
@@ -970,6 +991,8 @@ def api_draft_state():
                     "value": e.get("value", 1.0),
                     "espn_value": e.get("espn_value"),
                     "adjusted_value": e["adjusted_value"],
+                    "market_value": e.get("market_value"),
+                    "market_price": e.get("market_price"),
                     "projected_points": e.get("projected_points", 0),
                     "injury_status": e.get("injury_status", ""),
                     "practice": e.get("practice", ""),

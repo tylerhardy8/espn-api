@@ -150,11 +150,20 @@ class DraftState:
         budgets.sort(key=lambda b: b["remaining"], reverse=True)
         return budgets
 
-    def get_inflation(self):
+    @staticmethod
+    def market_of(entry):
+        """A player's league-calibrated market value (falls back to value)."""
+        return entry.get("market_value") or entry.get("value", 1.0)
+
+    def has_market(self):
+        return any("market_value" in e for e in self.pool.values()) if self.pool else False
+
+    def get_inflation(self, basis="value"):
         """League-wide inflation multiplier for remaining pool values.
 
         Remaining cash chasing the top remaining players: > 1.0 means prices
         should run above baseline values, < 1.0 means bargains ahead.
+        basis="market" measures against league-calibrated market values.
         """
         if not self.pool:
             return 1.0
@@ -164,12 +173,13 @@ class DraftState:
         if remaining_slots <= 0:
             return 1.0
 
+        key = self.market_of if basis == "market" else (lambda e: e.get("value", 1.0))
         available = sorted(
             (e for pid, e in self.pool.items() if pid not in self.drafted_ids),
-            key=lambda e: e.get("value", 1.0),
+            key=key,
             reverse=True,
         )[:remaining_slots]
-        base = sum(max(1.0, e.get("value", 1.0)) for e in available)
+        base = sum(max(1.0, key(e)) for e in available)
         return round(remaining_cash / base, 3) if base else 1.0
 
     def get_available_ranked(self, limit=25, position=None):
@@ -181,13 +191,30 @@ class DraftState:
             and (position is None or e.get("position") == position)
         ]
         available.sort(key=lambda e: e.get("value", 0), reverse=True)
+        market_inflation = self.get_inflation(basis="market") if self.has_market() else inflation
         ranked = []
         for e in available[:limit]:
-            ranked.append({
+            entry = {
                 **e,
                 "adjusted_value": round(e.get("value", 1.0) * inflation, 1),
-            })
+            }
+            if "market_value" in e:
+                entry["market_price"] = round(e["market_value"] * market_inflation, 1)
+            ranked.append(entry)
         return ranked
+
+    def scarcity(self, player_id, floor=0.8):
+        """How many available players at this position are within `floor` of
+        this player's value (including them). 1 = last of their kind."""
+        entry = self._pool_entry(player_id)
+        if not entry:
+            return None
+        pos, val = entry.get("position"), entry.get("value", 1.0)
+        return sum(
+            1 for pid, e in self.pool.items()
+            if pid not in self.drafted_ids and e.get("position") == pos
+            and e.get("value", 1.0) >= val * floor
+        )
 
     def get_my_slot(self, team_name):
         """(slot, total_slots) for a team in the draft order, or (None, total)."""

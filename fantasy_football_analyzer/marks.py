@@ -42,11 +42,30 @@ class MarkStore:
         except Exception:
             pass  # disk trouble must never break the draft
 
+    # Mock rehearsal mode is persisted with the marks, and mock marks live in
+    # their own namespace ("mock:<league>") so a rehearsal never touches the
+    # real board — whichever way a restart or a forgotten toggle goes.
+    def is_mock(self, league_id):
+        with self._lock:
+            self._load()
+            return bool((self._data.get("__mock__") or {}).get(str(league_id)))
+
+    def set_mock(self, league_id, enabled):
+        with self._lock:
+            self._load()
+            modes = self._data.setdefault("__mock__", {})
+            modes[str(league_id)] = bool(enabled)
+            self._save()
+
+    def _ns(self, league_id):
+        modes = self._data.get("__mock__") or {}
+        return f"mock:{league_id}" if modes.get(str(league_id)) else str(league_id)
+
     def get(self, league_id):
         """{pid: {"team_id", "bid", "seq"}} for a league, ordered by arrival."""
         with self._lock:
             self._load()
-            marks = self._data.get(str(league_id)) or {}
+            marks = self._data.get(self._ns(league_id)) or {}
             out = {}
             for pid, info in sorted(marks.items(), key=lambda kv: kv[1].get("seq", 0)):
                 out[int(pid)] = {
@@ -60,7 +79,7 @@ class MarkStore:
         """Record a mark. Known team/price win over later teamless reports."""
         with self._lock:
             self._load()
-            marks = self._data.setdefault(str(league_id), {})
+            marks = self._data.setdefault(self._ns(league_id), {})
             key = str(pid)
             existing = marks.get(key)
             if existing is None:
@@ -77,7 +96,7 @@ class MarkStore:
     def remove(self, league_id, pid):
         with self._lock:
             self._load()
-            marks = self._data.get(str(league_id)) or {}
+            marks = self._data.get(self._ns(league_id)) or {}
             marks.pop(str(pid), None)
             self._save()
             return len(marks)
@@ -85,7 +104,7 @@ class MarkStore:
     def clear(self, league_id):
         with self._lock:
             self._load()
-            self._data.pop(str(league_id), None)
+            self._data.pop(self._ns(league_id), None)
             self._save()
 
 

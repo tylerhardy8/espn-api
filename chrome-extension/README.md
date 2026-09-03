@@ -73,7 +73,9 @@ panel driving off a mock room:
 3. Nominations, bids, the clock, and sales with prices flow into the board;
    mock team ids won't match your league, so buyers show as "Team N" (you are
    recognised from the room's token, so your own bids say YOU).
-4. Untick mock mode when done — it wipes the marks so the real board is clean.
+4. Untick mock mode when done. Mock marks live on their own board, so the real
+   board is exactly as you left it (the mode is remembered across restarts —
+   make sure the MOCK badge is off on draft day).
 
 ## Room protocol (captured live)
 
