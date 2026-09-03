@@ -296,6 +296,8 @@ def _auction_payload(live, league, config, pool, team_name):
             else:
                 need_mult = 1.0 if count_need else 0.6
             starts = lineup_gain > 0.2 * cand["value"]
+            if not starts:
+                need_mult = min(need_mult, 0.6)   # bench-bound: never a full-price need
         except Exception:
             need_mult = 1.0 if count_need else 0.6
         need = count_need or need_mult >= 0.75

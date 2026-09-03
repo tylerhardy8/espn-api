@@ -7,6 +7,7 @@ champions when history is available.
 """
 
 DEFAULT_TOP3_SHARE = 0.55   # share of budget on the top three buys (stars-and-scrubs-ish)
+MAX_TOP3_SHARE = 0.68       # champions' shape prior is capped so mid-tier slots keep real money
 FILLER_PRICE = 1.0          # dollars reserved per slot that will be a $1 flyer
 
 
@@ -43,7 +44,7 @@ def build_budget_plan(state, team_name, top3_share=None, intel=None):
             champs = (intel or {}).get("league", {}).get("champion_profiles") or []
             shares = [c["top3_share"] for c in champs if c.get("top3_share")]
             if shares:
-                top3_share = sum(shares) / len(shares)
+                top3_share = min(MAX_TOP3_SHARE, sum(shares) / len(shares))
         except Exception:
             pass
 
@@ -64,24 +65,47 @@ def build_budget_plan(state, team_name, top3_share=None, intel=None):
     star_pool = max(0.0, top3_share * state.budget - sum(spent_prices[:3]))
     star_pool = min(star_pool, spendable)
 
-    # Rank open slots by the best available price at that position (stars first)
+    # Star slots rotate across the positions with the priciest boards (an
+    # RB1 and a WR1 before a second RB); the rest are filled in order of
+    # the best available price at that position.
     ladders = {pos: _ladder(state, pos) for pos in set(open_slots)}
-    slot_order = sorted(open_slots, key=lambda pos: -(ladders[pos][0]["price"] if ladders[pos] else 0))
+    top_price = lambda pos: ladders[pos][0]["price"] if ladders[pos] else 0.0
+    by_pos_remaining = {pos: open_slots.count(pos) for pos in set(open_slots)}
+    star_slots = []
+    pos_cycle = sorted(by_pos_remaining, key=lambda pos: -top_price(pos))
+    while len(star_slots) < min(stars_left, len(open_slots)) and pos_cycle:
+        for pos in list(pos_cycle):
+            if len(star_slots) >= stars_left:
+                break
+            if by_pos_remaining[pos] > 0 and top_price(pos) >= 0.12 * state.budget:
+                star_slots.append(pos)
+                by_pos_remaining[pos] -= 1
+            else:
+                pos_cycle.remove(pos)
+    rest_slots_list = []
+    for pos in sorted(by_pos_remaining, key=lambda pos: -top_price(pos)):
+        rest_slots_list += [pos] * by_pos_remaining[pos]
+    slot_order = star_slots + rest_slots_list
+    stars_n = len(star_slots)
     targets = []
-    used_by_pos = {}
-    star_each = star_pool / stars_left if stars_left else 0.0
-    rest_pool = max(0.0, spendable - star_each * min(stars_left, len(slot_order)))
-    rest_slots = max(1, len(slot_order) - min(stars_left, len(slot_order)))
-    rest_each = rest_pool / rest_slots
+    next_idx = {}
+    star_each = star_pool / stars_n if stars_n else 0.0
+    # A star slot can't be worth more than the best player left at that position
+    star_targets = [min(star_each, top_price(pos)) for pos in star_slots]
+    rest_pool = max(0.0, spendable - sum(star_targets))
+    rest_each = rest_pool / max(1, len(rest_slots_list))
     for i, pos in enumerate(slot_order):
-        target = star_each if i < stars_left else rest_each
+        target = star_targets[i] if i < stars_n else rest_each
         target = max(FILLER_PRICE, min(target, spendable))
-        idx = used_by_pos.get(pos, 0)
         ladder = ladders.get(pos) or []
-        # The first player on the ladder at or below the target is the example
-        example = next((e for e in ladder[idx:] if e["price"] <= target * 1.1), None) or \
-            (ladder[idx] if idx < len(ladder) else None)
-        used_by_pos[pos] = idx + 1
+        start = next_idx.get(pos, 0)
+        # The first not-yet-used player at or below the target is the example
+        found = next((k for k in range(start, len(ladder)) if ladder[k]["price"] <= target * 1.1), None)
+        if found is None and start < len(ladder):
+            found = start
+        example = ladder[found] if found is not None else None
+        if found is not None:
+            next_idx[pos] = found + 1
         targets.append({
             "position": pos,
             "target": int(round(target)),
