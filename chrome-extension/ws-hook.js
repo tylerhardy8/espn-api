@@ -66,12 +66,20 @@
     }
   }
 
-  // ESPN's draft room speaks a token protocol. Snake (captured live):
-  //   "SELECTED <teamId> <playerId> <n> {memberSwid}"   (playerId < 0 = D/ST)
-  //   "AUTOSELECTED ..." same shape; "SELECTING <teamId> <clockMs>" ignored.
-  // Auction tokens are parsed provisionally here and refined from a real
-  // room's samples; anything unrecognised is still relayed raw.
+  // ESPN's draft room speaks a token protocol (captured live):
+  // Snake:
+  //   SELECTED <teamId> <playerId> <n> {swid}      (playerId < 0 = D/ST)
+  //   SELECTING <teamId> <clockMs>
+  // Auction:
+  //   TOKEN 1:<leagueId>:<myTeamId>:{swid}:<memberId>
+  //   NOMINATION <teamId> <clockMs>                 team on the clock to nominate
+  //   BID <teamId> <playerId> <amount> <clockTotal> <clockLeft>   (first BID = opening $1)
+  //   BID_ACK <myTeamId> <playerId> <amount>        ack of our own bid
+  //   CLOCK <phase> <msLeft> [<highTeam> <playerId> <highBid>]   phase 2 = bidding
+  //   SOLD <teamId> <playerId> <pickNo> <price> 0
+  //   AUTOSUGGEST <playerId>, JOINED, AUTODRAFT     ignored
   const TOKEN_RE = /^\s*([A-Z_]+)\s*(.*)$/s;
+  let lastClockSent = 0;
 
   function parseToken(data) {
     const m = data.match(TOKEN_RE);
@@ -80,6 +88,30 @@
     const args = m[2].trim().split(/\s+/).filter(Boolean);
     const ints = args.map((a) => (/^-?\d+$/.test(a) ? parseInt(a, 10) : null));
     return { verb, args, ints, raw: data.slice(0, 300) };
+  }
+
+  function auctionEvent(tok) {
+    const i = tok.ints;
+    switch (tok.verb) {
+      case "NOMINATION":
+        return { kind: "nominating", teamId: i[0], clockMs: i[1] };
+      case "BID":
+        return { kind: "bid", teamId: i[0], playerId: i[1], amount: i[2], clockMs: i[4] };
+      case "CLOCK":
+        if (i[0] === 2 && i.length >= 5) {
+          // Once a second; relay at most every 2s (the panel polls every 3s)
+          const now = Date.now();
+          if (now - lastClockSent < 2000) return null;
+          lastClockSent = now;
+          return { kind: "clock", clockMs: i[1], teamId: i[2], playerId: i[3], amount: i[4] };
+        }
+        if (i[0] === 3) return { kind: "between", clockMs: i[1] };
+        return null;
+      case "SOLD":
+        return { kind: "sold", teamId: i[0], playerId: i[1], pick: i[2], amount: i[3] };
+      default:
+        return null;
+    }
   }
 
   function mine(data) {
@@ -93,24 +125,34 @@
       if (!/playerid/i.test(data)) return;  // cheap pre-filter
       try { collectPicks(JSON.parse(data), out); } catch (e) { /* not JSON */ }
     } else {
-      if (!NOISE.test(data) && tokenSamples < MAX_TOKEN_SAMPLES) {
+      const tok = parseToken(data);
+      if (!tok) return;
+      if (tok.verb !== "CLOCK" && !NOISE.test(data) && tokenSamples < MAX_TOKEN_SAMPLES) {
         tokenSamples += 1;
         sample("IN", data.slice(0, 600));
       }
-      const tok = parseToken(data);
-      if (!tok) return;
+      if (tok.verb === "TOKEN") {
+        // 1:<leagueId>:<myTeamId>:{swid}:<memberId> — identifies the room
+        const parts = (tok.args[0] || "").split(":");
+        const leagueId = parseInt(parts[1], 10);
+        const teamId = parseInt(parts[2], 10);
+        if (leagueId) post({ meta: { leagueId, teamId: teamId || null } });
+        return;
+      }
       if (tok.verb === "SELECTED" || tok.verb === "AUTOSELECTED") {
-        // <teamId> <playerId> <n> {swid}  — snake; auction sales may append a price
         const [teamId, playerId] = tok.ints;
         if (Number.isInteger(teamId) && Number.isInteger(playerId) && playerId !== 0) {
-          const bid = tok.ints.slice(2).find((n) => Number.isInteger(n) && n > 0 && n < 1000) ?? null;
-          out.set(playerId, { teamId, bid });
+          out.set(playerId, { teamId, bid: null });
         }
-      } else if (tok.verb !== "SELECTING") {
-        // Nomination / bid / sold / clock frames: relay for the auction card.
-        // The service worker forwards these to the analyzer, which logs and
-        // interprets them once the shapes are known.
-        post({ auction: tok });
+      } else if (tok.verb === "SOLD") {
+        const ev = auctionEvent(tok);
+        if (Number.isInteger(ev.playerId) && ev.playerId !== 0) {
+          out.set(ev.playerId, { teamId: ev.teamId, bid: ev.amount });
+        }
+        post({ auction: { ...ev, raw: tok.raw } });
+      } else {
+        const ev = auctionEvent(tok);
+        if (ev) post({ auction: { ...ev, raw: tok.raw } });
       }
     }
     const fresh = [...out.entries()]

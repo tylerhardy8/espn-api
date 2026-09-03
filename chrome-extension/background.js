@@ -80,7 +80,11 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
   if (msg.auction) {
     postJson("/api/auction-live", { event: msg.auction, league_id: ctx.leagueId, mock: ctx.mock })
+      .then((resp) => { if (resp.status === 409) updateBadge("mock", "#e05252"); })
       .catch(() => {});
+  }
+  if (msg.meta) {
+    postJson("/api/auction-live", { meta: msg.meta, league_id: ctx.leagueId, mock: ctx.mock }).catch(() => {});
   }
   if (msg.sample) {
     postJson("/api/debug-frame", { sample: msg.sample, league_id: ctx.leagueId, mock: ctx.mock })

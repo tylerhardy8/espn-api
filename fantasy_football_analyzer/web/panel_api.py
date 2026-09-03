@@ -66,6 +66,7 @@ def api_marks_clear():
         return jsonify({"error": "Could not connect to league"}), 500
     mark_store.clear(league.league_id)
     _auction_live.pop(league.league_id, None)
+    _state_cache.pop(league.league_id, None)
     return jsonify({"ok": True, "marked": 0})
 
 
@@ -95,29 +96,70 @@ def _find_pid_by_name(pool, name):
     return next((p for p, e in pool.items() if normalize_name(e["name"]) == wanted), None)
 
 
-def _decode_event(event, pool, league):
-    """Provisional reading of an auction-room token frame.
+_mock_mode = {}  # league_id -> True while a mock room may drive the active board
 
-    Unknown verbs are kept as raw events only. Shapes are refined against
-    frames captured from a real room (see chrome-extension/README.md).
+
+def mock_allowed(league_id):
+    return bool(_mock_mode.get(league_id))
+
+
+@bp.route("/api/mock-mode", methods=["GET", "POST", "OPTIONS"])
+def api_mock_mode():
+    """Rehearsal switch: let a mock draft room drive the active league's board.
+
+    Team ids from the mock room won't match the real league (unknown teams),
+    but nominations, bids, sales with prices, budgets, and advice all flow.
+    Turning it off wipes the marks so the real board starts clean.
     """
+    if request.method == "OPTIONS":
+        return ("", 204)
+    config, league, err = get_league_or_redirect()
+    if err:
+        return jsonify({"error": "Could not connect to league"}), 500
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        enabled = bool(payload.get("enabled"))
+        _mock_mode[league.league_id] = enabled
+        if not enabled:
+            mark_store.clear(league.league_id)
+            _auction_live.pop(league.league_id, None)
+            _state_cache.pop(league.league_id, None)
+    return jsonify({"enabled": mock_allowed(league.league_id), "league_id": league.league_id})
+
+
+def _foreign_room(payload, league):
+    """True when a payload comes from a room that must not touch this board."""
+    if mock_allowed(league.league_id):
+        return False
+    page_league = payload.get("league_id")
+    return bool(payload.get("mock")) or (
+        isinstance(page_league, int) and page_league != league.league_id
+    )
+
+
+def _decode_event(event):
+    """Read a room event relayed by the extension (shapes captured from a
+    real ESPN auction room; see chrome-extension/ws-hook.js)."""
+    kind = event.get("kind")
+    if kind:
+        return kind, event
+    # Raw token fallback: {verb, ints}
     verb = str(event.get("verb", "")).upper()
-    ints = [i for i in (event.get("ints") or []) if isinstance(i, int)]
-    team_ids = {t.team_id for t in league.teams}
-    player = next((i for i in ints if i in pool), None)
-    if player is None:
-        player = next((i for i in ints if i < 0), None)  # D/ST ids are negative
-    team = next((i for i in ints if i in team_ids and i != player), None)
-    budget = getattr(league.settings, "auction_budget", 0) or 200
-    amount = next((i for i in ints if i not in (player, team) and 0 < i <= budget), None)
-    kind = None
-    if "NOMINAT" in verb:
-        kind = "nominate"
-    elif "BID" in verb:
-        kind = "bid"
-    elif verb in ("SOLD", "WON", "AWARDED", "PURCHASED"):
-        kind = "sold"
-    return kind, player, team, amount
+    i = [x for x in (event.get("ints") or []) if isinstance(x, int)] + [None] * 6
+    if verb == "NOMINATION":
+        return "nominating", {"teamId": i[0], "clockMs": i[1]}
+    if verb == "BID":
+        return "bid", {"teamId": i[0], "playerId": i[1], "amount": i[2], "clockMs": i[4]}
+    if verb == "CLOCK" and i[0] == 2:
+        return "clock", {"clockMs": i[1], "teamId": i[2], "playerId": i[3], "amount": i[4]}
+    if verb == "SOLD":
+        return "sold", {"teamId": i[0], "playerId": i[1], "pick": i[2], "amount": i[3]}
+    return None, {}
+
+
+def _empty_live():
+    return {"player_id": None, "high_bid": 0, "high_bidder": None, "nominating": None,
+            "clock_ms": None, "phase": None, "updated": 0, "events": [], "my_team_id": None}
 
 
 @bp.route("/api/auction-live", methods=["GET", "POST", "OPTIONS"])
@@ -131,33 +173,45 @@ def api_auction_live():
         pool, *_ = get_valued_pool(league, config)
     except Exception:
         pool = {}
-    live = _auction_live.setdefault(league.league_id, {
-        "player_id": None, "high_bid": 0, "high_bidder": None, "updated": 0, "events": [],
-    })
+    live = _auction_live.setdefault(league.league_id, _empty_live())
 
     if request.method == "POST":
         payload = request.get_json(silent=True) or {}
-        page_league = payload.get("league_id")
-        if payload.get("mock") or (isinstance(page_league, int) and page_league != league.league_id):
+        if _foreign_room(payload, league):
             return jsonify({"error": "different league than the active profile"}), 409
 
         if payload.get("clear"):
-            live.update({"player_id": None, "high_bid": 0, "high_bidder": None})
+            live.update({"player_id": None, "high_bid": 0, "high_bidder": None, "clock_ms": None})
+        elif payload.get("meta"):
+            tid = payload["meta"].get("teamId")
+            if isinstance(tid, int):
+                live["my_team_id"] = tid
         elif payload.get("event"):
             event = payload["event"]
-            print(f"AUCTION-EVENT >>> {event.get('raw', '')[:300]}", flush=True)
-            live["events"] = (live["events"] + [str(event.get("raw", ""))[:120]])[-20:]
-            kind, player, team, amount = _decode_event(event, pool, league)
-            if kind == "nominate" and player is not None:
-                live.update({"player_id": player, "high_bid": amount or 1, "high_bidder": team})
-            elif kind == "bid" and amount:
-                if live["player_id"] is not None and amount >= live["high_bid"]:
-                    live.update({"high_bid": amount, "high_bidder": team})
-            elif kind == "sold" and player is not None:
-                if player in pool:
-                    mark_store.set(league.league_id, player, team_id=team,
-                                   bid=amount or live["high_bid"] or None)
-                live.update({"player_id": None, "high_bid": 0, "high_bidder": None})
+            kind, ev = _decode_event(event)
+            if kind != "clock":
+                print(f"AUCTION-EVENT >>> {str(event.get('raw', ''))[:300]}", flush=True)
+                live["events"] = (live["events"] + [str(event.get("raw", ""))[:120]])[-20:]
+            if kind == "nominating":
+                live.update({"player_id": None, "high_bid": 0, "high_bidder": None,
+                             "nominating": ev.get("teamId"), "clock_ms": ev.get("clockMs"),
+                             "phase": "nominating"})
+            elif kind in ("bid", "clock"):
+                pid, amount = ev.get("playerId"), ev.get("amount")
+                if isinstance(pid, int) and isinstance(amount, int):
+                    if pid != live["player_id"] or amount >= live["high_bid"]:
+                        live.update({"player_id": pid, "high_bid": amount,
+                                     "high_bidder": ev.get("teamId")})
+                    live.update({"clock_ms": ev.get("clockMs"), "phase": "bidding"})
+            elif kind == "between":
+                live.update({"phase": "between", "clock_ms": ev.get("clockMs")})
+            elif kind == "sold":
+                pid = ev.get("playerId")
+                if isinstance(pid, int) and pid in pool:
+                    mark_store.set(league.league_id, pid, team_id=ev.get("teamId"),
+                                   bid=ev.get("amount") or live["high_bid"] or None)
+                live.update({"player_id": None, "high_bid": 0, "high_bidder": None,
+                             "clock_ms": None, "phase": "sold"})
         else:
             # Manual on-block from the panel: {player_id|name, high_bid, high_bidder}
             pid = payload.get("player_id")
@@ -185,10 +239,23 @@ def api_auction_live():
 
 def _auction_payload(live, league, config, pool, team_name):
     teams_by_id = {t.team_id: t.team_name for t in league.teams}
+    def team_label(tid):
+        if tid is None:
+            return None
+        if tid == live.get("my_team_id") and team_name:
+            return team_name
+        return teams_by_id.get(tid) or f"Team {tid}"
+
     out = {
         "player_id": live["player_id"],
         "high_bid": live["high_bid"],
-        "high_bidder": teams_by_id.get(live["high_bidder"]),
+        "high_bidder": team_label(live["high_bidder"]),
+        "high_bidder_is_me": live["high_bidder"] is not None and live["high_bidder"] == live.get("my_team_id"),
+        "nominating": team_label(live.get("nominating")),
+        "nominating_is_me": live.get("nominating") is not None and live.get("nominating") == live.get("my_team_id"),
+        "clock_ms": live.get("clock_ms"),
+        "phase": live.get("phase"),
+        "mock": mock_allowed(league.league_id),
         "updated": live["updated"],
         "events": live["events"][-5:],
     }

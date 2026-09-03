@@ -7,19 +7,27 @@
   // Which ESPN league this tab is in (draft room URLs carry leagueId=…).
   // The analyzer refuses marks from a different league than its active
   // profile, so a mock room can never pollute the real board.
+  let roomLeagueId = null;  // from the room's TOKEN frame (authoritative)
+  let roomTeamId = null;
   function pageLeagueId() {
+    if (roomLeagueId) return roomLeagueId;
     const m = location.href.match(/[?&]leagueId=(\d+)/i);
     return m ? parseInt(m[1], 10) : null;
   }
   const isMock = /mock/i.test(location.pathname);
 
   function send(payload) {
-    chrome.runtime.sendMessage({ leagueId: pageLeagueId(), mock: isMock, ...payload });
+    chrome.runtime.sendMessage({ leagueId: pageLeagueId(), myTeamId: roomTeamId, mock: isMock, ...payload });
   }
 
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (event.source !== window || !msg || msg.source !== "ffa-draft-tracker") return;
+    if (msg.meta) {
+      roomLeagueId = msg.meta.leagueId || roomLeagueId;
+      roomTeamId = msg.meta.teamId || roomTeamId;
+      send({ meta: msg.meta });
+    }
     if (Array.isArray(msg.picks) && msg.picks.length) send({ picks: msg.picks });
     if (msg.auction) send({ auction: msg.auction });
     if (msg.sample) send({ sample: msg.sample });

@@ -62,19 +62,33 @@ any open ESPN draft-room tab.
 - Don't restart the container mid-draft: marks persist on disk, but the pool
   and intel caches would rebuild (a minute of stale board).
 
-## Protocol capture (mock drafts)
+## Rehearsal in an ESPN mock draft
 
-The extension samples every small frame from the room to the analyzer's log,
-so a new room type (auction) can be read from a real session:
+Marks from a mock room are refused by default (HTTP 409, badge turns red
+"mock") so a mock never pollutes your real board. To rehearse with the real
+panel driving off a mock room:
+
+1. Panel → Settings → tick **Mock rehearsal mode** (a red MOCK badge appears).
+2. Enter the mock auction room, reload the tab once, open the panel.
+3. Nominations, bids, the clock, and sales with prices flow into the board;
+   mock team ids won't match your league, so buyers show as "Team N" (you are
+   recognised from the room's token, so your own bids say YOU).
+4. Untick mock mode when done — it wipes the marks so the real board is clean.
+
+## Room protocol (captured live)
+
+The extension samples every small frame to the analyzer's log:
 
 ```bash
 docker logs ffa 2>&1 | grep -E "FRAME-SAMPLE|AUCTION-EVENT" | tail -200
 ```
 
-Marks from a mock room are refused (HTTP 409 — the badge turns red "mock"),
-so a mock never pollutes your real board. Known shapes (snake, captured live):
-`SELECTED <teamId> <playerId> <n> {swid}` (playerId < 0 = D/ST),
+Snake: `SELECTED <teamId> <playerId> <n> {swid}` (playerId < 0 = D/ST),
 `SELECTING <teamId> <clockMs>`.
+Auction: `TOKEN 1:<leagueId>:<myTeamId>:{swid}:…`, `NOMINATION <teamId> <clockMs>`,
+`BID <teamId> <playerId> <amount> <clockTotal> <clockLeft>` (first BID = the
+opening $1), `CLOCK 2 <msLeft> <highTeam> <playerId> <highBid>` (once a second),
+`SOLD <teamId> <playerId> <pickNo> <price> 0`.
 
 ## Notes
 

@@ -262,13 +262,24 @@ async function refresh() {
   }
 }
 
+function clockHtml(b) {
+  if (b.clock_ms == null) return "";
+  const secs = Math.max(0, Math.round(b.clock_ms / 1000));
+  return `<span class="clock ${secs <= 5 ? "low" : ""}">${secs}s</span>`;
+}
+
 function renderBlock(b) {
+  $("mock-badge").hidden = !(b && b.mock);
+  if (b && b.mock !== undefined) $("mock-mode").checked = !!b.mock;
   if (!b || b.player_id == null) {
-    $("block-body").innerHTML = `<div class="meta">Waiting for a nomination… (or type one below)</div>`;
+    const who = b && b.nominating
+      ? `${b.nominating_is_me ? `<span class="me">YOU are nominating</span>` : `${esc(b.nominating)} is nominating`} ${clockHtml(b)}`
+      : "Waiting for a nomination… (or type one below)";
+    $("block-body").innerHTML = `<div class="meta">${who}</div>`;
     return;
   }
   if (!b.name) {
-    $("block-body").innerHTML = `<div class="meta">Player #${b.player_id} on the block (not in pool) · high $${b.high_bid}</div>`;
+    $("block-body").innerHTML = `<div class="meta">Player #${b.player_id} on the block (not in pool) · high $${b.high_bid} ${clockHtml(b)}</div>`;
     return;
   }
   const verdict = b.verdict === "bid"
@@ -278,14 +289,15 @@ function renderBlock(b) {
     <div class="big">${esc(b.name)}<span class="pos">${esc(b.position)}</span>
       ${b.need ? "" : `<span class="flag">position filled</span>`}${b.already_drafted ? `<span class="flag out">already tracked</span>` : ""}</div>
     <div class="bids">
-      <span>High bid <strong>$${b.high_bid}</strong>${b.high_bidder ? ` <span class="who">— ${esc(b.high_bidder)}</span>` : ""}</span>
+      <span>High bid <strong>$${b.high_bid}</strong>${b.high_bidder ? ` <span class="who ${b.high_bidder_is_me ? "me" : ""}">— ${b.high_bidder_is_me ? "YOU" : esc(b.high_bidder)}</span>` : ""} ${clockHtml(b)}</span>
       ${verdict}
     </div>
     <div class="meta">value $${b.value} · adj $${b.adjusted_value} · crowd $${b.espn_value ?? "–"} · my max $${b.my_max_bid}</div>`;
 }
 
 async function pollBlock() {
-  if (tab !== "draft" || !isAuction || !myTeam) return;
+  if (tab !== "draft" || !myTeam) return;
+  if (!isAuction && $("block-card").hidden) return;
   try {
     const b = await api("/api/auction-live?team=" + encodeURIComponent(myTeam));
     renderBlock(b);
@@ -458,6 +470,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     await refresh();
   });
   $("league-select").addEventListener("change", (ev) => switchLeague(ev.target.value));
+  $("mock-mode").addEventListener("change", async (ev) => {
+    const enabled = ev.target.checked;
+    if (!enabled && !confirm("Leave mock mode? This clears every mark on this board.")) {
+      ev.target.checked = true;
+      return;
+    }
+    try { await postJson("/api/mock-mode", { enabled }); } catch (e) { /* ignore */ }
+    $("mock-badge").hidden = !enabled;
+    lastPickCount = -1;
+    await refresh();
+    pollBlock();
+  });
   $("tabs").addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-tab]");
     if (b) showTab(b.dataset.tab);

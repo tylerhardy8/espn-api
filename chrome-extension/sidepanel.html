@@ -10,6 +10,7 @@
     <div class="brand">🏈 FFA</div>
     <select id="league-select" title="Switch league"></select>
     <div class="status">
+      <span id="mock-badge" class="mock-badge" hidden>MOCK</span>
       <span id="conn" class="dot off" title="App connection"></span>
       <span id="team-label">connecting…</span>
     </div>
@@ -175,6 +176,9 @@
         <button id="save-url">Save</button>
         <button id="clear-marks" class="danger" title="Wipe every tracked pick for this league (use before a draft or after a mock)">Clear marks</button>
       </div>
+      <label class="mock-toggle" title="Let an ESPN mock draft room drive this board for a rehearsal. Turning it off wipes the marks.">
+        <input type="checkbox" id="mock-mode"> Mock rehearsal mode (mock room drives this board)
+      </label>
       <div class="meta">Draft polls every 10s (on-block every 3s). Marks and advice go through your analyzer instance.</div>
     </details>
   </footer>

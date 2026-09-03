@@ -763,8 +763,8 @@ def api_mark_drafted():
 
     # Marks from another ESPN league (a mock draft room, a friend's league)
     # must never land on the active board.
-    page_league = payload.get("league_id")
-    if payload.get("mock") or (isinstance(page_league, int) and page_league != league.league_id):
+    from .panel_api import _foreign_room
+    if _foreign_room(payload, league):
         return jsonify({"error": "different league than the active profile",
                         "active_league_id": league.league_id}), 409
 

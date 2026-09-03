@@ -217,3 +217,9 @@ button.danger { border-color: rgba(224, 82, 82, 0.5); color: #ff8a8a; }
 .settings .controls { margin-top: 6px; }
 
 [hidden] { display: none !important; }
+
+.mock-badge { background: var(--red); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; }
+.mock-toggle { display: flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.block-body .clock { font-weight: 700; color: var(--gold); }
+.block-body .clock.low { color: var(--red); }
+.block-body .me { color: var(--gold); font-weight: 700; }
