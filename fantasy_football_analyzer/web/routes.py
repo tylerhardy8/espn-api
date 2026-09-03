@@ -21,6 +21,7 @@ from ..trades import (
 from ..waivers import get_top_free_agents, find_streamers, get_waiver_recommendations
 from ..draft_tracker import DraftState
 from ..rss_news import fetch_news, match_news_to_players
+from ..marks import store as mark_store
 
 from .helpers import (
     ai_available, get_league_or_redirect, clear_league_cache, parse_year_range,
@@ -309,10 +310,19 @@ def _test_connection_and_redirect(config):
 def switch_league():
     """Navbar league switcher: activate a profile and return to the current page."""
     config = load_config()
-    updated = set_active_league(config, request.form.get("name", ""))
+    body = request.get_json(silent=True) if request.is_json else None
+    name = (body or {}).get("name") if body is not None else request.form.get("name", "")
+    updated = set_active_league(config, name or "")
     if updated:
         save_config(updated)
         clear_league_cache()
+    if body is not None:
+        # JSON clients (the Chrome side panel) get a JSON answer, no redirect
+        if not updated:
+            return jsonify({"error": "Unknown league profile"}), 404
+        return jsonify({"active": updated["active"], "league_id": updated.get("league_id"),
+                        "team_name": updated.get("team_name") or ""})
+    if updated:
         flash(f"Switched to {updated['active']}.", "success")
     else:
         flash("Unknown league profile.", "danger")
@@ -521,74 +531,78 @@ def trades_ai():
         return "<p class='text-danger'>Could not connect to league.</p>"
 
     team_name = request.form.get("team_name", config.get("team_name"))
-
     try:
-        from ..ai_advisor import get_trade_evaluation_ai
-
-        context_lines = []
-        for team in league.teams:
-            strengths = evaluate_roster_strength(team)
-            team_needs = identify_team_needs(team, league)
-            weak = [n["position"] for n in team_needs if n["deficit"] > 0][:3]
-            context_lines.append(
-                f"{team.team_name} ({team.wins}-{team.losses})"
-                + (f" — weak at: {', '.join(weak)}" if weak else " — no clear weakness")
-                + ":"
-            )
-            for pos in ["QB", "RB", "WR", "TE"]:
-                if pos in strengths:
-                    names = ", ".join(p["name"] for p in strengths[pos]["starters"])
-                    bench = ", ".join(p["name"] for p in strengths[pos]["bench"][:2])
-                    context_lines.append(
-                        f"  {pos}: {names} ({strengths[pos]['starter_points']:.1f} pts)"
-                        + (f" | bench: {bench}" if bench else "")
-                    )
-
-        # Computed mutual-fit matches so the AI grounds advice in real partners
-        if team_name:
-            my_team = next(
-                (t for t in league.teams if t.team_name.lower() == team_name.lower()),
-                None,
-            )
-            if my_team is not None:
-                try:
-                    ai_pool = get_valued_pool(league, config)[0]
-                except Exception:
-                    ai_pool = {}
-                matches = find_trade_matches(my_team, league, pool=ai_pool)
-                if matches:
-                    context_lines.append(
-                        "\nCOMPUTED TRADE MATCHES (both starting lineups improve "
-                        "net of what leaves them — these are realistic asks):"
-                    )
-                    for m in matches:
-                        context_lines.append(
-                            f"  {m['partner']} (fit {m['fit_score']}): "
-                            f"needs {', '.join(m['their_needs']) or '-'}"
-                        )
-                        for s in m["proposals"]:
-                            gives = " + ".join(s["give_players"])
-                            gets = " + ".join(s["receive_players"])
-                            context_lines.append(
-                                f"    {gives} for {gets} — my roster {s['my_net']:+.1f}, "
-                                f"theirs {s['their_net']:+.1f}, market ratio "
-                                f"{s['market_ratio']:.2f}"
-                            )
-
-        if team_name:
-            prompt = (
-                f"I manage '{team_name}'. Analyze my roster and suggest the best "
-                f"trade I could propose to improve my team. Consider positional "
-                f"needs and what other teams might accept."
-            )
-        else:
-            prompt = "Analyze these rosters and suggest the most impactful trade."
-
-        advice = get_trade_evaluation_ai(prompt, "\n".join(context_lines),
-                                         api_key=get_ai_key(config))
+        advice = trade_ai_advice(config, league, team_name)
         return render_template("partials/_ai_section.html", advice=advice, title="AI Trade Analysis")
     except Exception as e:
         return f"<p class='text-danger'>AI analysis error: {e}</p>"
+
+
+def trade_ai_advice(config, league, team_name):
+    """Claude's trade analysis for a team (shared by the page and the panel API)."""
+    from ..ai_advisor import get_trade_evaluation_ai
+
+    context_lines = []
+    for team in league.teams:
+        strengths = evaluate_roster_strength(team)
+        team_needs = identify_team_needs(team, league)
+        weak = [n["position"] for n in team_needs if n["deficit"] > 0][:3]
+        context_lines.append(
+            f"{team.team_name} ({team.wins}-{team.losses})"
+            + (f" — weak at: {', '.join(weak)}" if weak else " — no clear weakness")
+            + ":"
+        )
+        for pos in ["QB", "RB", "WR", "TE"]:
+            if pos in strengths:
+                names = ", ".join(p["name"] for p in strengths[pos]["starters"])
+                bench = ", ".join(p["name"] for p in strengths[pos]["bench"][:2])
+                context_lines.append(
+                    f"  {pos}: {names} ({strengths[pos]['starter_points']:.1f} pts)"
+                    + (f" | bench: {bench}" if bench else "")
+                )
+
+    # Computed mutual-fit matches so the AI grounds advice in real partners
+    if team_name:
+        my_team = next(
+            (t for t in league.teams if t.team_name.lower() == team_name.lower()),
+            None,
+        )
+        if my_team is not None:
+            try:
+                ai_pool = get_valued_pool(league, config)[0]
+            except Exception:
+                ai_pool = {}
+            matches = find_trade_matches(my_team, league, pool=ai_pool)
+            if matches:
+                context_lines.append(
+                    "\nCOMPUTED TRADE MATCHES (both starting lineups improve "
+                    "net of what leaves them — these are realistic asks):"
+                )
+                for m in matches:
+                    context_lines.append(
+                        f"  {m['partner']} (fit {m['fit_score']}): "
+                        f"needs {', '.join(m['their_needs']) or '-'}"
+                    )
+                    for s in m["proposals"]:
+                        gives = " + ".join(s["give_players"])
+                        gets = " + ".join(s["receive_players"])
+                        context_lines.append(
+                            f"    {gives} for {gets} — my roster {s['my_net']:+.1f}, "
+                            f"theirs {s['their_net']:+.1f}, market ratio "
+                            f"{s['market_ratio']:.2f}"
+                        )
+
+    if team_name:
+        prompt = (
+            f"I manage '{team_name}'. Analyze my roster and suggest the best "
+            f"trade I could propose to improve my team. Consider positional "
+            f"needs and what other teams might accept."
+        )
+    else:
+        prompt = "Analyze these rosters and suggest the most impactful trade."
+
+    return get_trade_evaluation_ai(prompt, "\n".join(context_lines),
+                                   api_key=get_ai_key(config))
 
 
 # ---------------------------------------------------------------------------
@@ -655,24 +669,27 @@ def waivers_ai():
 
     team_name = request.form.get("team_name", config.get("team_name"))
     week = request.form.get("week", type=int) or league.current_week
-
     try:
-        from ..ai_advisor import get_waiver_advice_ai
-        from ..waivers import format_waiver_report
-
-        report = format_waiver_report(league, my_team_name=team_name, week=week)
-        prompt = f"Here is my league's waiver wire report"
-        if team_name:
-            prompt += f" (I manage '{team_name}')"
-        prompt += (
-            ". Provide strategic recommendations on who to pick up, who to drop, "
-            "and any sleepers to target.\n\n" + report
-        )
-
-        advice = get_waiver_advice_ai(prompt, api_key=get_ai_key(config))
+        advice = waiver_ai_advice(config, league, team_name, week)
         return render_template("partials/_ai_section.html", advice=advice, title="AI Waiver Analysis")
     except Exception as e:
         return f"<p class='text-danger'>AI analysis error: {e}</p>"
+
+
+def waiver_ai_advice(config, league, team_name, week):
+    """Claude's waiver analysis (shared by the page and the panel API)."""
+    from ..ai_advisor import get_waiver_advice_ai
+    from ..waivers import format_waiver_report
+
+    report = format_waiver_report(league, my_team_name=team_name, week=week)
+    prompt = "Here is my league's waiver wire report"
+    if team_name:
+        prompt += f" (I manage '{team_name}')"
+    prompt += (
+        ". Provide strategic recommendations on who to pick up, who to drop, "
+        "and any sleepers to target.\n\n" + report
+    )
+    return get_waiver_advice_ai(prompt, api_key=get_ai_key(config))
 
 
 # ---------------------------------------------------------------------------
@@ -696,9 +713,8 @@ def live_draft():
     )
 
 
-# Manual drafted-player marks: ESPN's REST API freezes during live drafts,
-# so the user can mark picks by hand. In-memory per league (draft-night scope).
-_manual_drafted = {}
+# Drafted-player marks (extension feed, history scraper, manual) live in
+# fantasy_football_analyzer.marks — persisted to disk, ordered, with prices.
 
 
 @bp.after_request
@@ -709,6 +725,19 @@ def _api_cors(response):
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
+
+
+@bp.route("/api/me")
+def api_me():
+    """Active league + team for external clients (the Chrome side panel)."""
+    config = load_config()
+    return jsonify({
+        "league": config.get("active"),
+        "league_id": config.get("league_id"),
+        "year": config.get("year"),
+        "team_name": config.get("team_name") or "",
+        "ai_available": ai_available(config),
+    })
 
 
 @bp.route("/api/debug-frame", methods=["POST", "OPTIONS"])
@@ -732,10 +761,20 @@ def api_mark_drafted():
     payload = request.get_json(silent=True) or {}
     pid = payload.get("player_id")
 
+    # Marks from another ESPN league (a mock draft room, a friend's league)
+    # must never land on the active board.
+    page_league = payload.get("league_id")
+    if payload.get("mock") or (isinstance(page_league, int) and page_league != league.league_id):
+        return jsonify({"error": "different league than the active profile",
+                        "active_league_id": league.league_id}), 409
+
     try:
         pool, *_ = get_valued_pool(league, config)
     except Exception:
         pool = {}
+
+    bid = payload.get("bid_amount")
+    bid = int(bid) if isinstance(bid, (int, float)) and bid > 0 else None
 
     # Row-based marking: leaf texts from a pick-history row. Match the player
     # against the pool and the team against league team names.
@@ -759,6 +798,11 @@ def api_mark_drafted():
                     if tid is not None:
                         team_id_from_row = tid
                         break
+                if bid is None:
+                    # Auction history rows carry the sale price as "$NN"
+                    price = _price_in_texts(texts)
+                    if price:
+                        bid = price
         except Exception:
             pid = None
         if pid is None:
@@ -785,20 +829,29 @@ def api_mark_drafted():
     if pool and pid not in pool:
         # Liberal candidate mining (extension) sends stray ints; reject them
         return jsonify({"error": f"player_id {pid} not in draft pool"}), 404
-    marked = _manual_drafted.setdefault(league.league_id, {})
     if payload.get("undo"):
-        marked.pop(pid, None)
+        count = mark_store.remove(league.league_id, pid)
     else:
         team_id = payload.get("team_id")
-        # Keep a known team over a later teamless report
-        if isinstance(team_id, int) or pid not in marked:
-            marked[pid] = team_id if isinstance(team_id, int) else None
-    return jsonify({"marked": len(marked), "player_id": pid})
+        count = mark_store.set(league.league_id, pid,
+                               team_id=team_id if isinstance(team_id, int) else None,
+                               bid=bid)
+    return jsonify({"marked": count, "player_id": pid, "bid_amount": bid})
+
+
+def _price_in_texts(texts):
+    """First '$NN' amount in a list of short strings, or None."""
+    import re
+    for t in texts:
+        m = re.search(r"\$\s?(\d{1,3})\b", str(t))
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def _apply_manual_picks(state, league, pool):
-    """Fold manually/extension-marked drafted players into the draft state."""
-    marked = _manual_drafted.get(league.league_id) or {}
+    """Fold marked drafted players (with team + price) into the draft state."""
+    marked = mark_store.get(league.league_id)
     new = [pid for pid in marked if pid not in state.drafted_ids and pid in pool]
     if not new:
         return
@@ -806,10 +859,12 @@ def _apply_manual_picks(state, league, pool):
     teams_by_id = {t.team_id: t for t in league.teams}
     base = len(state.picks)
     num_teams = max(1, len(league.teams))
+    # Arrival order is the pick order (marks are sequenced as they land)
     picks = [
-        _SyntheticPick(teams_by_id.get(marked.get(pid)), pid, pool[pid]["name"],
-                       (base + i) // num_teams + 1, (base + i) % num_teams + 1)
-        for i, pid in enumerate(sorted(new, key=lambda p: pool[p].get("adp") or 9999))
+        _SyntheticPick(teams_by_id.get(marked[pid]["team_id"]), pid, pool[pid]["name"],
+                       (base + i) // num_teams + 1, (base + i) % num_teams + 1,
+                       bid_amount=marked[pid]["bid"])
+        for i, pid in enumerate(new)
     ]
     state.add_picks(picks)
     state.synthetic_picks = True
@@ -922,6 +977,9 @@ def api_draft_state():
             payload["active_run"] = state.active_run
             if team_name:
                 payload["my_needs"] = state.get_team_needs(team_name)
+            if state.is_auction:
+                payload["cash_rich"] = payload["budgets"][:3]
+                payload["nominate_next"] = nomination_candidates(state, team_name)
             try:
                 from ..sources import get_sources_status
                 payload["sources"] = get_sources_status()
@@ -960,6 +1018,49 @@ def api_draft_recommendation():
         return jsonify({"recommendation": advice, "web_search": web_search})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+def nomination_candidates(state, team_name, limit=3):
+    """Players worth nominating to drain rivals' cash.
+
+    Prefers high-value players at positions I've already filled; otherwise
+    players the crowd prices well above our model *relative to the rest of
+    the board* (ESPN's values assume a $200 budget, so only the ratio is
+    meaningful); finally top one-slot positions (QB/TE) I can wait on.
+    Never my own targets.
+    """
+    needs = state.get_team_needs(team_name) if team_name else {}
+    ranked = state.get_available_ranked(limit=40)
+    picks = []
+
+    def take(cands, why):
+        for e in cands:
+            if len(picks) >= limit:
+                break
+            if all(e["player_id"] != x[0]["player_id"] for x in picks):
+                picks.append((e, why))
+
+    if needs:
+        take([e for e in ranked if e.get("position") and needs.get(e["position"], 0) <= 0],
+             "position filled")
+
+    ratios = [(e, e["espn_value"] / max(1.0, e.get("value", 1.0)))
+              for e in ranked if e.get("espn_value")]
+    if ratios:
+        med = sorted(r for _, r in ratios)[len(ratios) // 2]
+        hot = [e for e, r in sorted(ratios, key=lambda x: x[1], reverse=True) if r > med * 1.15]
+        take(hot, "crowd overprices")
+
+    take([e for e in ranked if e.get("position") in ("QB", "TE")], "one-slot position")
+
+    return [
+        {
+            "player_id": e["player_id"], "name": e["name"], "position": e["position"],
+            "adjusted_value": e["adjusted_value"], "espn_value": e.get("espn_value"),
+            "why": why,
+        }
+        for e, why in picks[:limit]
+    ]
 
 
 def _get_intel_text(league, config, team_name):

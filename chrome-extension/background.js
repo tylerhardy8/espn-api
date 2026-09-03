@@ -5,6 +5,11 @@ const DEFAULT_APP = "http://localhost:5050";
 const posted = new Set();
 let markedTotal = 0;
 
+// Clicking the toolbar icon opens the advisor side panel beside the draft room
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+});
+
 async function appUrl() {
   try {
     const stored = await chrome.storage.sync.get("appUrl");
@@ -14,24 +19,32 @@ async function appUrl() {
   }
 }
 
-function updateBadge() {
-  chrome.action.setBadgeText({ text: markedTotal ? String(markedTotal) : "" });
-  chrome.action.setBadgeBackgroundColor({ color: "#2e9e5b" });
+function updateBadge(text, color) {
+  chrome.action.setBadgeText({ text });
+  chrome.action.setBadgeBackgroundColor({ color });
 }
 
-async function post(body) {
+async function postJson(path, body) {
+  const base = await appUrl();
+  const resp = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return resp;
+}
+
+async function mark(body, ctx) {
   try {
-    const base = await appUrl();
-    const resp = await fetch(`${base}/api/mark-drafted`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const resp = await postJson("/api/mark-drafted", { ...body, league_id: ctx.leagueId, mock: ctx.mock });
     if (resp.ok) {
       const data = await resp.json();
       markedTotal = data.marked ?? markedTotal;
-      updateBadge();
+      updateBadge(markedTotal ? String(markedTotal) : "", "#2e9e5b");
       console.log("FFA marked:", body, "->", data.marked, "total");
+    } else if (resp.status === 409) {
+      // Different league than the analyzer's active profile (e.g. a mock room)
+      updateBadge("mock", "#e05252");
     }
   } catch (e) {
     console.warn("FFA app unreachable:", e.message);
@@ -39,6 +52,7 @@ async function post(body) {
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
+  const ctx = { leagueId: msg.leagueId ?? null, mock: !!msg.mock };
   for (const pick of msg.picks || []) {
     // Re-post when the team becomes known for an already-posted player
     const key = pick.teamId ? `idt:${pick.playerId}` : `id:${pick.playerId}`;
@@ -46,28 +60,30 @@ chrome.runtime.onMessage.addListener((msg) => {
       posted.add(key);
       const body = { player_id: pick.playerId };
       if (pick.teamId) body.team_id = pick.teamId;
-      post(body);
+      if (pick.bid) body.bid_amount = pick.bid;
+      mark(body, ctx);
     }
   }
   for (const name of msg.names || []) {
     const key = `name:${name}`;
     if (!posted.has(key)) {
       posted.add(key);
-      post({ name });
+      mark({ name }, ctx);
     }
   }
   for (const row of msg.rows || []) {
     const key = `row:${row.join("|")}`;
     if (!posted.has(key)) {
       posted.add(key);
-      post({ row });
+      mark({ row }, ctx);
     }
   }
+  if (msg.auction) {
+    postJson("/api/auction-live", { event: msg.auction, league_id: ctx.leagueId, mock: ctx.mock })
+      .catch(() => {});
+  }
   if (msg.sample) {
-    appUrl().then((base) => fetch(`${base}/api/debug-frame`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sample: msg.sample }),
-    }).catch(() => {}));
+    postJson("/api/debug-frame", { sample: msg.sample, league_id: ctx.leagueId, mock: ctx.mock })
+      .catch(() => {});
   }
 });

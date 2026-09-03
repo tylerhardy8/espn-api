@@ -1,18 +1,28 @@
-// Isolated-world bridge: relays ids from the WebSocket hook to the service
+// Isolated-world bridge: relays events from the WebSocket hook to the service
 // worker, and scans the pick-history panel DOM for player names as a
 // fallback (backfill for picks made before the hook was installed).
 (() => {
   const sentNames = new Set();
 
+  // Which ESPN league this tab is in (draft room URLs carry leagueId=…).
+  // The analyzer refuses marks from a different league than its active
+  // profile, so a mock room can never pollute the real board.
+  function pageLeagueId() {
+    const m = location.href.match(/[?&]leagueId=(\d+)/i);
+    return m ? parseInt(m[1], 10) : null;
+  }
+  const isMock = /mock/i.test(location.pathname);
+
+  function send(payload) {
+    chrome.runtime.sendMessage({ leagueId: pageLeagueId(), mock: isMock, ...payload });
+  }
+
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (event.source !== window || !msg || msg.source !== "ffa-draft-tracker") return;
-    if (Array.isArray(msg.picks) && msg.picks.length) {
-      chrome.runtime.sendMessage({ picks: msg.picks });
-    }
-    if (msg.sample) {
-      chrome.runtime.sendMessage({ sample: msg.sample });
-    }
+    if (Array.isArray(msg.picks) && msg.picks.length) send({ picks: msg.picks });
+    if (msg.auction) send({ auction: msg.auction });
+    if (msg.sample) send({ sample: msg.sample });
   });
 
   // Name shaped like "Ja'Marr Chase", "Kenneth Walker III", "A.J. Brown"
@@ -26,8 +36,9 @@
     for (const panel of panels) {
       if (/queue|watchlist/i.test(panel.className)) continue;
       // A "row" is any element containing a player-shaped name plus other
-      // short leaf texts (pick number, team name). The server matches the
-      // player against the pool and the team against league team names.
+      // short leaf texts (pick number, team name, "$NN" price in auctions).
+      // The server matches the player against the pool, the team against
+      // league team names, and reads the price from a "$NN" leaf.
       for (const el of panel.querySelectorAll("*")) {
         const total = (el.textContent || "").trim();
         if (total.length < 5 || total.length > 120) continue;
@@ -45,9 +56,7 @@
         if (rows.length >= 250) break;
       }
     }
-    if (rows.length) {
-      chrome.runtime.sendMessage({ rows });
-    }
+    if (rows.length) send({ rows });
   }
 
   setInterval(scanDom, 6000);

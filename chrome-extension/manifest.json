@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "FFA Draft Tracker",
-  "version": "1.0",
-  "description": "Relays ESPN live draft picks to your Fantasy Football Analyzer",
+  "version": "2.0",
+  "description": "Live pick tracking plus a Claude-powered draft advisor side panel for ESPN draft rooms",
   "host_permissions": [
     "http://localhost:5050/*",
     "http://127.0.0.1:5050/*"
   ],
-  "permissions": ["storage"],
+  "permissions": ["storage", "sidePanel"],
   "action": {
-    "default_title": "FFA Draft Tracker (badge = picks relayed)"
+    "default_title": "FFA Draft Advisor — click to open the side panel"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "background": {
     "service_worker": "background.js"

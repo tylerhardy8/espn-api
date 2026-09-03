@@ -12,6 +12,7 @@ def create_app():
     app.secret_key = os.environ.get("FLASK_SECRET_KEY") or "fantasy-football-dev-key"
 
     from .routes import bp
+    from . import panel_api  # noqa: F401  (registers the side-panel JSON routes on bp)
     app.register_blueprint(bp)
 
     @app.context_processor

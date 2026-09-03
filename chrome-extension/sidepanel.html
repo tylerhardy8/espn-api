@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FFA Advisor</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">🏈 FFA</div>
+    <select id="league-select" title="Switch league"></select>
+    <div class="status">
+      <span id="conn" class="dot off" title="App connection"></span>
+      <span id="team-label">connecting…</span>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="draft" class="on">Draft</button>
+    <button data-tab="trades">Trades</button>
+    <button data-tab="waivers">Waivers</button>
+  </nav>
+
+  <!-- ======================= DRAFT ======================= -->
+  <main id="tab-draft" class="tab">
+    <section id="position" class="card position">
+      <div class="row">
+        <span class="label">Picks made</span><strong id="picks">–</strong>
+      </div>
+      <div class="row" id="slot-row" hidden>
+        <span class="label">My next picks</span><strong id="my-picks">–</strong>
+      </div>
+      <div class="row" id="auction-row" hidden>
+        <span class="label">Budget</span>
+        <strong><span id="remaining">$–</span> left · max bid <span id="max-bid">$–</span>
+          · infl <span id="inflation">–</span></strong>
+      </div>
+      <div id="run-alert" class="alert" hidden></div>
+    </section>
+
+    <section id="block-card" class="card block" hidden>
+      <div class="card-head">
+        <span>On the block</span>
+        <div class="controls">
+          <button id="block-clear" title="Clear the on-block card">clear</button>
+        </div>
+      </div>
+      <div id="block-body" class="block-body">
+        <div class="meta">Waiting for a nomination… (or type one below)</div>
+      </div>
+      <div class="block-manual">
+        <input id="block-name" type="text" placeholder="player name">
+        <input id="block-bid" type="number" min="1" placeholder="$ high">
+        <button id="block-set">set</button>
+      </div>
+    </section>
+
+    <section id="auction-intel" class="card" hidden>
+      <div class="two-col">
+        <div>
+          <div class="card-head"><span>Cash-rich rivals</span></div>
+          <div id="cash-rich" class="mini"></div>
+        </div>
+        <div>
+          <div class="card-head"><span>Nominate next</span></div>
+          <div id="nominate" class="mini"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card advice">
+      <div class="card-head">
+        <span>Claude's advice</span>
+        <div class="controls">
+          <label title="Auto-advise as picks land (throttled to every 90s)">
+            <input type="checkbox" id="auto-ai" checked> auto
+          </label>
+          <label title="Advise Now also searches the web for same-day news">
+            <input type="checkbox" id="web-search" checked> news
+          </label>
+          <button id="advise" class="primary">Advise now</button>
+        </div>
+      </div>
+      <div id="advice-meta" class="meta"></div>
+      <pre id="advice" class="advice-text">Press <b>Advise now</b> — or wait for the next pick with auto on.</pre>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <span>Best available</span>
+        <div class="filters" id="pos-filter">
+          <button data-pos="" class="on">All</button>
+          <button data-pos="QB">QB</button>
+          <button data-pos="RB">RB</button>
+          <button data-pos="WR">WR</button>
+          <button data-pos="TE">TE</button>
+        </div>
+      </div>
+      <div class="mark-bar">
+        <span id="sources" class="meta"></span>
+        <label class="meta">× marks to <select id="mark-team"><option value="">unknown team</option></select></label>
+      </div>
+      <table class="board">
+        <tbody id="board"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><span>My roster</span><span id="roster-count" class="meta"></span></div>
+      <div id="roster" class="roster"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><span>Recent picks</span></div>
+      <div id="recent" class="recent"></div>
+    </section>
+  </main>
+
+  <!-- ======================= TRADES ======================= -->
+  <main id="tab-trades" class="tab" hidden>
+    <section class="card">
+      <div class="card-head">
+        <span>My needs</span>
+        <div class="controls">
+          <button id="trades-refresh">refresh</button>
+          <button id="trades-ai" class="primary">AI analysis</button>
+        </div>
+      </div>
+      <div id="trade-needs" class="chips"><span class="meta">Loading…</span></div>
+    </section>
+    <section id="trade-advice-card" class="card" hidden>
+      <div class="card-head"><span>Claude's trade analysis</span></div>
+      <div id="trade-advice-meta" class="meta"></div>
+      <pre id="trade-advice" class="advice-text"></pre>
+    </section>
+    <div id="trade-partners"></div>
+  </main>
+
+  <!-- ======================= WAIVERS ======================= -->
+  <main id="tab-waivers" class="tab" hidden>
+    <section class="card">
+      <div class="card-head">
+        <span>Week <input id="waiver-week" type="number" min="1" max="18" class="week"></span>
+        <div class="controls">
+          <button id="waivers-refresh">refresh</button>
+          <button id="waivers-ai" class="primary">AI analysis</button>
+        </div>
+      </div>
+      <div id="waiver-meta" class="meta">Loading…</div>
+    </section>
+    <section id="waiver-advice-card" class="card" hidden>
+      <div class="card-head"><span>Claude's waiver analysis</span></div>
+      <div id="waiver-advice-meta" class="meta"></div>
+      <pre id="waiver-advice" class="advice-text"></pre>
+    </section>
+    <section class="card">
+      <div class="card-head"><span>Upgrades for my roster</span></div>
+      <div id="waiver-recs" class="list"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><span>Streamers</span></div>
+      <div id="waiver-streamers" class="list"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><span>Top free agents</span></div>
+      <div id="waiver-top" class="list"></div>
+    </section>
+  </main>
+
+  <footer class="settings">
+    <details>
+      <summary>Settings</summary>
+      <label>App URL <input id="app-url" type="text" placeholder="http://localhost:5050"></label>
+      <div class="controls">
+        <button id="save-url">Save</button>
+        <button id="clear-marks" class="danger" title="Wipe every tracked pick for this league (use before a draft or after a mock)">Clear marks</button>
+      </div>
+      <div class="meta">Draft polls every 10s (on-block every 3s). Marks and advice go through your analyzer instance.</div>
+    </details>
+  </footer>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

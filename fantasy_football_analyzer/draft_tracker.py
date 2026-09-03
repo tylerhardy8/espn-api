@@ -251,13 +251,14 @@ class DraftState:
 class _SyntheticPick:
     """Mimics BasePick for picks reconstructed from the free-agent pool."""
 
-    def __init__(self, team, player_id, player_name, round_num, round_pick):
+    def __init__(self, team, player_id, player_name, round_num, round_pick,
+                 bid_amount=0):
         self.team = team
         self.playerId = player_id
         self.playerName = player_name
         self.round_num = round_num
         self.round_pick = round_pick
-        self.bid_amount = 0
+        self.bid_amount = int(bid_amount or 0)
         self.keeper_status = False
         self.nominatingTeam = None
 
