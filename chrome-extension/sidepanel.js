@@ -316,7 +316,7 @@ function renderBlock(b) {
       ${verdict}
     </div>
     ${b.reason ? `<div class="reason">${esc(b.reason)}</div>` : ""}
-    <div class="meta">model $${b.adjusted_value}${b.market_price ? ` · market $${b.market_price}` : ""} · crowd $${b.espn_value ?? "–"} · my max $${b.my_max_bid}${b.scarcity != null ? ` · ${b.scarcity} comparable left` : ""}</div>
+    <div class="meta">model $${b.adjusted_value}${b.market_price ? ` · market $${b.market_price}` : ""}${b.plan_target != null ? ` · plan $${b.plan_target}` : ""} · crowd $${b.espn_value ?? "–"} · my max $${b.my_max_bid}${b.scarcity != null ? ` · ${b.scarcity} comparable left` : ""}</div>
     ${historyHtml(b)}`;
 }
 

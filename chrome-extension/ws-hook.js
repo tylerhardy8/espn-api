@@ -80,6 +80,12 @@
   //   AUTOSUGGEST <playerId>, JOINED, AUTODRAFT     ignored
   const TOKEN_RE = /^\s*([A-Z_]+)\s*(.*)$/s;
   let lastClockSent = 0;
+  let lastMeta = null;
+  // The token frame arrives once, at socket open, possibly before the
+  // isolated-world bridge is listening. Re-announce the room identity so
+  // every relay carries the right league id (the analyzer refuses marks
+  // from rooms it can't identify).
+  setInterval(() => { if (lastMeta) post({ meta: lastMeta }); }, 5000);
 
   function parseToken(data) {
     const m = data.match(TOKEN_RE);
@@ -136,7 +142,10 @@
         const parts = (tok.args[0] || "").split(":");
         const leagueId = parseInt(parts[1], 10);
         const teamId = parseInt(parts[2], 10);
-        if (leagueId) post({ meta: { leagueId, teamId: teamId || null } });
+        if (leagueId) {
+          lastMeta = { leagueId, teamId: teamId || null };
+          post({ meta: lastMeta });
+        }
         return;
       }
       if (tok.verb === "SELECTED" || tok.verb === "AUTOSELECTED") {

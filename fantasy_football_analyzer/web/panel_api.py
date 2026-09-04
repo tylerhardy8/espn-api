@@ -127,13 +127,22 @@ def api_mock_mode():
 
 
 def _foreign_room(payload, league):
-    """True when a payload comes from a room that must not touch this board."""
+    """True when a payload comes from a room that must not touch this board.
+
+    The extension always sends a `mock` flag; when it does, the room's
+    league id must match the active league exactly — an unknown room (no
+    league id yet, e.g. a history-row scan before the room's token frame)
+    is refused rather than trusted. Manual marks from the panel carry no
+    `mock` key and are always allowed.
+    """
     if mock_allowed(league.league_id):
         return False
     page_league = payload.get("league_id")
-    return bool(payload.get("mock")) or (
-        isinstance(page_league, int) and page_league != league.league_id
-    )
+    if "mock" in payload:
+        if payload.get("mock"):
+            return True
+        return not (isinstance(page_league, int) and page_league == league.league_id)
+    return isinstance(page_league, int) and page_league != league.league_id
 
 
 def _decode_event(event):
@@ -362,6 +371,21 @@ def _auction_payload(live, league, config, pool, team_name):
         else:
             verdict, reason = "pass", f"above market (~${market_price or suggested})"
 
+        # Budget plan: does this buy fit the target for a slot at this position?
+        plan_target = None
+        try:
+            from ..plan import build_budget_plan
+            plan = build_budget_plan(state, team_name, intel=intel)
+            slots = [t["target"] for t in (plan or {}).get("targets", []) if t["position"] == pos]
+            if slots:
+                plan_target = max(slots)
+        except Exception:
+            plan_target = None
+        if plan_target is not None and verdict == "bid" and high >= plan_target:
+            verdict = "stretch"
+            reason = (f"under model (${suggested}) but over your plan for a {pos} slot "
+                      f"(${plan_target})")
+
         notes = []
         if lineup_gain is not None:
             notes.append(f"adds +{lineup_gain:.0f} pts to your lineup" if starts
@@ -386,6 +410,7 @@ def _auction_payload(live, league, config, pool, team_name):
             "crowd_value": entry.get("crowd_value"),
             "ceiling_value": entry.get("ceiling_value"), "floor_value": entry.get("floor_value"),
             "bye": bye, "bye_collision": bye_collision,
+            "plan_target": plan_target,
             "my_max_bid": my_max, "suggested_max_bid": suggested,
             "market_value": market_value, "market_price": market_price,
             "stretch_cap": stretch_cap if market_price else None,
