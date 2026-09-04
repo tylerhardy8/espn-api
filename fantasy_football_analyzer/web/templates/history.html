@@ -1,0 +1,496 @@
+{% extends "base.html" %}
+
+{% block title %}Historical Analysis - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-clock-history text-info"></i> Historical Analysis</h2>
+    <form class="d-flex gap-2" method="GET">
+        <input type="text" class="form-control" name="years" value="{{ years }}"
+               placeholder="e.g. 2020-2024" style="width: 160px;">
+        <input type="hidden" name="group_by" value="{{ group_by }}">
+        <button type="submit" class="btn btn-outline-info">
+            <i class="bi bi-arrow-clockwise"></i> Load
+        </button>
+    </form>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <p class="text-muted mb-0">Analyzing {{ num_seasons }} season(s): {{ years }}</p>
+    <div class="btn-group" role="group">
+        <a href="{{ url_for('main.history', years=years, group_by='team') }}"
+           class="btn btn-sm {% if group_by == 'team' %}btn-info{% else %}btn-outline-info{% endif %}">
+            <i class="bi bi-people"></i> By Team
+        </a>
+        <a href="{{ url_for('main.history', years=years, group_by='manager') }}"
+           class="btn btn-sm {% if group_by == 'manager' %}btn-info{% else %}btn-outline-info{% endif %}">
+            <i class="bi bi-person"></i> By Manager
+        </a>
+    </div>
+</div>
+
+{# Franchise Rank Timeline #}
+{% if chart_data.years|length > 1 and chart_data.rank_by_team %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">
+            <i class="bi bi-graph-down-arrow"></i> Finish by Season
+            <small class="text-muted fw-normal ms-2">rank 1 on top &middot; hover a line for details</small>
+        </h5>
+    </div>
+    <div class="chart-box" style="height: 380px;">
+        <canvas id="rankChart"></canvas>
+    </div>
+</div>
+{% endif %}
+
+{# All-Time Rankings #}
+{% if team_history %}
+{% set max_pf = team_history.values()|map(attribute='avg_points_for')|max %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">
+            <i class="bi bi-trophy"></i>
+            All-Time {% if group_by == 'manager' %}Manager{% else %}Team{% endif %} Rankings
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th data-sort="text">{% if group_by == 'manager' %}Manager{% else %}Team{% endif %}</th>
+                        <th class="text-center" data-sort="num">Seasons</th>
+                        <th data-sort="num">Win %</th>
+                        <th class="text-center" data-sort="num">Avg Finish</th>
+                        <th class="text-center" data-sort="num">Titles</th>
+                        <th data-sort="num">Avg PF</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for name, data in team_history.items()|sort(attribute='1.all_time_win_pct', reverse=true) %}
+                    <tr {% if my_team and name.lower() == my_team.lower() %}class="table-active"{% endif %}>
+                        <td>
+                            <span class="fw-bold">{{ name }}</span>
+                            {% if group_by == 'manager' and data.team_names|length > 0 %}
+                            <br><small class="text-muted">
+                                <i class="bi bi-tag"></i> {{ data.team_names|join(', ') }}
+                            </small>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">{{ data.num_seasons }}</td>
+                        <td>
+                            <div class="bar-cell">
+                                <div class="bar-track"><div class="bar-fill" style="width: {{ (data.all_time_win_pct * 100)|round }}%"></div></div>
+                                <span class="bar-value">{{ "%.3f"|format(data.all_time_win_pct) }}</span>
+                            </div>
+                        </td>
+                        <td class="text-center">{{ data.avg_finish }}</td>
+                        <td class="text-center">
+                            {% if data.championships > 0 %}
+                            <span class="badge bg-warning text-dark">{{ data.championships }} <i class="bi bi-trophy-fill"></i></span>
+                            {% else %}
+                            0
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="bar-cell">
+                                <div class="bar-track"><div class="bar-fill bar-gold" style="width: {{ (data.avg_points_for / max_pf * 100)|round if max_pf else 0 }}%"></div></div>
+                                <span class="bar-value">{{ data.avg_points_for }}</span>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Luck & Consistency #}
+{% if luck %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">
+            <i class="bi bi-dice-5"></i> Luck &amp; Consistency
+            <small class="text-muted fw-normal ms-2">expected wins from all-play record</small>
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th data-sort="text">Team</th>
+                        <th class="text-center" data-sort="num">Wins</th>
+                        <th class="text-center" data-sort="num">Expected Wins</th>
+                        <th class="text-center" data-sort="num">Luck</th>
+                        <th class="text-center" data-sort="num">Close Games (&le;5)</th>
+                        <th class="text-center" data-sort="num">Score StDev</th>
+                        <th class="text-center" data-sort="num">Avg Score</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for name, r in luck.items()|sort(attribute='1.luck_delta', reverse=true) %}
+                    <tr {% if my_team and name.lower() == my_team.lower() %}class="table-active"{% endif %}>
+                        <td class="fw-bold">{{ name }}</td>
+                        <td class="text-center">{{ r.actual_wins }}</td>
+                        <td class="text-center">{{ r.expected_wins }}</td>
+                        <td class="text-center">
+                            <span class="badge {% if r.luck_delta > 0.5 %}bg-success{% elif r.luck_delta < -0.5 %}bg-danger{% else %}bg-secondary{% endif %} bg-opacity-75">
+                                {% if r.luck_delta > 0 %}+{% endif %}{{ r.luck_delta }}
+                                {% if r.luck_delta > 0.5 %}<i class="bi bi-emoji-smile ms-1"></i>
+                                {% elif r.luck_delta < -0.5 %}<i class="bi bi-emoji-frown ms-1"></i>{% endif %}
+                            </span>
+                        </td>
+                        <td class="text-center">{{ r.close_wins }}-{{ r.close_losses }}</td>
+                        <td class="text-center">{{ r.score_stdev }}</td>
+                        <td class="text-center">{{ r.avg_score }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Scoring Trends #}
+{% if scoring_trends %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-graph-up"></i> Scoring Trends</h5>
+    </div>
+    {% if chart_data.scoring.years|length > 1 %}
+    <div class="chart-box">
+        <canvas id="scoringChart"></canvas>
+    </div>
+    {% else %}
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-center">Year</th>
+                        <th class="text-end">Avg Score</th>
+                        <th class="text-end">High Score</th>
+                        <th class="text-end">Low Score</th>
+                        <th class="text-center">Teams</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in scoring_trends %}
+                    <tr>
+                        <td class="text-center">{{ t.year }}</td>
+                        <td class="text-end">{{ "%.2f"|format(t.avg_score) }}</td>
+                        <td class="text-end text-success">{{ "%.2f"|format(t.max_score) }}</td>
+                        <td class="text-end text-danger">{{ "%.2f"|format(t.min_score) }}</td>
+                        <td class="text-center">{{ t.total_teams }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="row g-4 mb-4">
+    {# Manager Tendencies #}
+    {% if manager_tendencies %}
+    <div class="col-lg-7">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-person-gear"></i> Manager Tendencies</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover table-sortable mb-0">
+                        <thead>
+                            <tr>
+                                <th data-sort="text">Team</th>
+                                <th class="text-center" data-sort="num">Trades/Yr</th>
+                                <th class="text-center" data-sort="num">Pickups/Yr</th>
+                                <th class="text-center" data-sort="num">Drops/Yr</th>
+                                <th class="text-center" data-sort="num">Seasons</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for name, m in manager_tendencies.items()|sort(attribute='1.avg_acquisitions_per_season', reverse=true) %}
+                            <tr {% if my_team and name.lower() == my_team.lower() %}class="table-active"{% endif %}>
+                                <td class="fw-bold">{{ name }}</td>
+                                <td class="text-center">{{ m.avg_trades_per_season }}</td>
+                                <td class="text-center">{{ m.avg_acquisitions_per_season }}</td>
+                                <td class="text-center">{{ m.avg_drops_per_season }}</td>
+                                <td class="text-center">{{ m.seasons }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Head-to-Head Rivalries #}
+    {% if rivalries %}
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning"></i> Top Rivalries</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Matchup</th>
+                                <th style="width: 40%">Record</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in rivalries %}
+                            <tr>
+                                <td>
+                                    <span class="fw-bold">{{ r.team_a }}</span>
+                                    <span class="text-muted">vs</span>
+                                    <span class="fw-bold">{{ r.team_b }}</span>
+                                    <br><small class="text-muted">{{ r.total_games }} games</small>
+                                </td>
+                                <td>
+                                    <div class="bar-cell">
+                                        <div class="bar-track"><div class="bar-fill bar-green" style="width: {{ (r.wins / r.total_games * 100)|round if r.total_games else 0 }}%"></div></div>
+                                        <span class="bar-value">{{ r.wins }}-{{ r.losses }}{% if r.ties %}-{{ r.ties }}{% endif %}</span>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{# Draft Steals & Busts #}
+{% if draft_history %}
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-star"></i> Best Draft Picks</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-center">Year</th>
+                                <th class="text-center">Pick</th>
+                                <th>Player</th>
+                                <th>Drafted By</th>
+                                <th class="text-end">Pts</th>
+                                <th class="text-end">PPG</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pick in draft_history[:12] %}
+                            <tr>
+                                <td class="text-center">{{ pick.year }}</td>
+                                <td class="text-center">{{ pick.overall_pick }}</td>
+                                <td>
+                                    <span class="fw-bold">{{ pick.player }}</span>
+                                    {% if pick.position %}<span class="pos-badge ms-1">{{ pick.position }}</span>{% endif %}
+                                </td>
+                                <td><small>{{ pick.team }}</small></td>
+                                <td class="text-end">{{ "%.1f"|format(pick.total_points) }}</td>
+                                <td class="text-end text-muted">{{ "%.1f"|format(pick.avg_points) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-emoji-dizzy"></i> Biggest Busts <small class="text-muted fw-normal">(top-30 picks)</small></h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-center">Year</th>
+                                <th class="text-center">Pick</th>
+                                <th>Player</th>
+                                <th>Drafted By</th>
+                                <th class="text-end">Pts</th>
+                                <th class="text-end">PPG</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set early_picks = draft_history|selectattr('overall_pick', '<=', 30)|list %}
+                            {% for pick in (early_picks|sort(attribute='total_points'))[:12] %}
+                            <tr>
+                                <td class="text-center">{{ pick.year }}</td>
+                                <td class="text-center">{{ pick.overall_pick }}</td>
+                                <td>
+                                    <span class="fw-bold">{{ pick.player }}</span>
+                                    {% if pick.position %}<span class="pos-badge ms-1">{{ pick.position }}</span>{% endif %}
+                                </td>
+                                <td><small>{{ pick.team }}</small></td>
+                                <td class="text-end text-danger">{{ "%.1f"|format(pick.total_points) }}</td>
+                                <td class="text-end text-muted">{{ "%.1f"|format(pick.avg_points) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const chartData = {{ chart_data|tojson }};
+const myTeam = {{ my_team|tojson }};
+
+document.addEventListener("DOMContentLoaded", () => {
+    const colors = window.FFA_CHART_COLORS || { blue: "#3987e5", gold: "#ffc107", muted: "#5c6670" };
+
+    // ---- Franchise rank timeline -------------------------------------
+    const rankCanvas = document.getElementById("rankChart");
+    if (rankCanvas && chartData.years.length > 1) {
+        const numTeams = chartData.num_teams;
+
+        // Label each line at its right edge via a mirrored axis: the tick at
+        // rank N shows the team that finished rank N in the final season.
+        const finalLabels = {};
+        for (const [name, ranks] of Object.entries(chartData.rank_by_team)) {
+            const last = ranks[ranks.length - 1];
+            if (last != null) finalLabels[last] = name;
+        }
+
+        const isMine = (name) => myTeam && name.toLowerCase() === myTeam.toLowerCase();
+        const datasets = Object.entries(chartData.rank_by_team).map(([name, ranks]) => ({
+            label: name,
+            data: ranks,
+            borderColor: isMine(name) ? colors.gold : colors.muted,
+            backgroundColor: isMine(name) ? colors.gold : colors.muted,
+            borderWidth: isMine(name) ? 3 : 2,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            tension: 0.25,
+            spanGaps: false,
+            order: isMine(name) ? 0 : 1,
+        }));
+
+        new Chart(rankCanvas, {
+            type: "line",
+            data: { labels: chartData.years, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "nearest", intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => `${items[0].dataset.label} — ${items[0].label}`,
+                            label: (item) => `Finished #${item.parsed.y}`,
+                        },
+                    },
+                },
+                scales: {
+                    y: {
+                        reverse: true,
+                        min: 1,
+                        max: numTeams,
+                        ticks: { stepSize: 1, callback: (v) => `#${v}` },
+                        title: { display: true, text: "Final Rank" },
+                    },
+                    y1: {
+                        position: "right",
+                        reverse: true,
+                        min: 1,
+                        max: numTeams,
+                        grid: { drawOnChartArea: false },
+                        ticks: {
+                            stepSize: 1,
+                            autoSkip: false,
+                            callback: (v) => finalLabels[v] || "",
+                        },
+                    },
+                    x: { grid: { display: false } },
+                },
+            },
+        });
+    }
+
+    // ---- Scoring trends band ------------------------------------------
+    const scoringCanvas = document.getElementById("scoringChart");
+    if (scoringCanvas && chartData.scoring.years.length > 1) {
+        const s = chartData.scoring;
+        new Chart(scoringCanvas, {
+            type: "line",
+            data: {
+                labels: s.years,
+                datasets: [
+                    {
+                        label: "Weekly High",
+                        data: s.max,
+                        borderColor: colors.blue + "66",
+                        backgroundColor: colors.blue + "1f",
+                        borderWidth: 1,
+                        pointRadius: 2,
+                        fill: "+2",  // shade the high-low range
+                        tension: 0.25,
+                    },
+                    {
+                        label: "Average",
+                        data: s.avg,
+                        borderColor: colors.blue,
+                        backgroundColor: colors.blue,
+                        borderWidth: 2.5,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        fill: false,
+                        tension: 0.25,
+                    },
+                    {
+                        label: "Weekly Low",
+                        data: s.min,
+                        borderColor: colors.blue + "66",
+                        borderWidth: 1,
+                        pointRadius: 2,
+                        fill: false,
+                        tension: 0.25,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: "index", intersect: false },
+                plugins: { legend: { position: "bottom" } },
+                scales: {
+                    y: { title: { display: true, text: "Points" } },
+                    x: { grid: { display: false } },
+                },
+            },
+        });
+    }
+});
+</script>
+{% endblock %}

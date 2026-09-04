@@ -48,14 +48,19 @@ class BaseLeague(ABC):
     def _fetch_draft(self):
         '''Creates list of Pick objects from the leagues draft'''
         data = self.espn_request.get_league_draft()
-        # League has not drafted yet
-        if not data.get('draftDetail', {}).get('drafted'):
+        # League has not started drafting yet (in-progress drafts report
+        # drafted=False but stream completed picks with real playerIds)
+        draft_detail = data.get('draftDetail', {})
+        if not (draft_detail.get('drafted') or draft_detail.get('inProgress')):
             return
 
-        picks = data.get('draftDetail', {}).get('picks', [])
+        picks = draft_detail.get('picks', [])
         for pick in picks:
-            team = self.get_team_data(pick.get('teamId'))
             playerId = pick.get('playerId')
+            # Pre-created future pick slots carry playerId -1 until made
+            if not playerId or playerId <= 0:
+                continue
+            team = self.get_team_data(pick.get('teamId'))
             playerName = ''
             if playerId in self.player_map:
                 playerName = self.player_map[playerId]

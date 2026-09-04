@@ -1,0 +1,39 @@
+# Fantasy Football Analyzer — multi-friend deployment
+#
+# One app container per friend, each with its own config volume (their own
+# leagues, ESPN cookies, and AI key), behind a Caddy reverse proxy that
+# terminates HTTPS and enforces a per-friend password.
+#
+# Usage:
+#   cp .env.example .env       # set DOMAIN
+#   ./add-friend.sh mike       # creates sites/mike.caddy + friends.yml entry
+#   docker compose up -d --build
+#
+# Friend services live in friends.yml (managed by add-friend.sh).
+
+include:
+  - friends.yml
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - DOMAIN=${DOMAIN:?set DOMAIN in .env}
+    networks:
+      - ffa
+
+networks:
+  ffa:
+
+volumes:
+  caddy-data:
+  caddy-config:
