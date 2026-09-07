@@ -281,6 +281,7 @@ def _dedupe(proposals):
 # ---------------------------------------------------------------------------
 
 KEEPER_VALUE_RATIO = 2.5   # market value / draft price above which a player is a keeper-tag candidate
+KEEPER_MIN_ROS = 150       # a $5-or-less player projecting this many points is a tag candidate outright
 
 
 def draft_prices(league):
@@ -301,8 +302,9 @@ def keeper_flags(cards, prices):
         price = prices.get(c["player_id"])
         if not price:
             continue
-        if c["market"] >= KEEPER_VALUE_RATIO * price and c["market"] >= 15:
-            flags.append(f"{c['name']} (drafted ${price}, worth ${c['market']:.0f})")
+        cheap_starter = price <= 5 and c["ros"] >= KEEPER_MIN_ROS
+        if cheap_starter or (c["market"] >= KEEPER_VALUE_RATIO * price and c["market"] >= 15):
+            flags.append(f"{c['name']} (drafted ${price}, ROS {c['ros']:.0f} pts)")
     return flags
 
 

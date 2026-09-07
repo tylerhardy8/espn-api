@@ -32,6 +32,7 @@ def get_top_free_agents(league, week=None, size=50, position=None):
             "position": player.position,
             "team": player.proTeam,
             "projected_points": round(player.projected_points, 2),
+            "projected_total": round(getattr(player, "projected_total_points", 0) or 0, 2),
             "points": round(player.points, 2),
             "total_points": round(player.total_points, 2),
             "avg_points": round(player.avg_points, 2),
@@ -145,7 +146,8 @@ def get_waiver_recommendations(league, my_team_name=None, week=None):
             if not current_weakest:
                 continue
 
-            agent_pg = agent["avg_points"] if (played and agent["avg_points"] > 0) else round(agent["projected_points"] / 17.0, 2)
+            agent_pg = agent["avg_points"] if (played and agent["avg_points"] > 0) else \
+                round((agent.get("projected_total") or agent["projected_points"] * 17.0) / 17.0, 2)
             upgrade = round(agent_pg - current_weakest["avg_points"], 2)
             if upgrade > 0:
                 recommendations.append({
