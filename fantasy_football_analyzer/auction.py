@@ -338,6 +338,28 @@ def detect_tiers(pool, max_per_position=40):
     return pool
 
 
+def apply_consensus_projections(pool, league):
+    """Blend FantasyPros consensus projections into each entry's projected
+    points (keeps espn_projected / fp_projected for display). Best-effort."""
+    try:
+        from .sources import consensus_projection_map, blended_projection
+        fp_map = consensus_projection_map(league)
+    except Exception:
+        return 0
+    if not fp_map:
+        return 0
+    matched = 0
+    for e in pool.values():
+        espn = e.get("projected_points", 0)
+        blended, fp = blended_projection(e.get("name"), e.get("position"), espn, league, fp_map)
+        e["espn_projected"] = espn
+        if fp is not None:
+            matched += 1
+            e["fp_projected"] = fp
+            e["projected_points"] = blended
+    return matched
+
+
 def league_profile(league):
     """The slot profile for a league (legacy targets when settings are absent)."""
     slots = getattr(getattr(league, "settings", None), "position_slot_counts", None) or {}
@@ -356,6 +378,8 @@ def build_valued_pool(league, budget=None, size=400, enrich=True):
     targets, roster_size = profile["roster_targets"], profile["roster_size"]
     budget = budget or getattr(league.settings, "auction_budget", 0) or DEFAULT_BUDGET
     pool = build_draft_pool(league, size=size)
+    if enrich:
+        apply_consensus_projections(pool, league)
     calculate_auction_values(pool, budget, len(league.teams), targets, profile=profile)
     if enrich:
         try:

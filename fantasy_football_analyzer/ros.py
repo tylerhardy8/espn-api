@@ -49,6 +49,13 @@ def ros_projection(player, league=None):
     with the playoff weeks weighted by PLAYOFF_WEIGHT.
     """
     season_proj = float(getattr(player, "projected_total_points", 0) or 0)
+    if league is not None:
+        try:
+            from .sources import blended_projection
+            season_proj, _ = blended_projection(getattr(player, "name", ""), getattr(player, "position", ""),
+                                                season_proj, league)
+        except Exception:
+            pass
     current_week = int(getattr(league, "current_week", 0) or 0) if league else 0
     if current_week <= 1:
         current_week = 1

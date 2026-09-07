@@ -25,14 +25,23 @@ def get_top_free_agents(league, week=None, size=50, position=None):
         return []
 
     ranked = []
+    try:
+        from .ros import ros_projection
+    except Exception:
+        ros_projection = None
     for player in players:
+        try:
+            season_total = ros_projection(player, league) if ros_projection else None
+        except Exception:
+            season_total = None
         ranked.append({
             "name": player.name,
             "player_id": player.playerId,
             "position": player.position,
             "team": player.proTeam,
             "projected_points": round(player.projected_points, 2),
-            "projected_total": round(getattr(player, "projected_total_points", 0) or 0, 2),
+            "projected_total": round(season_total if season_total is not None
+                                     else (getattr(player, "projected_total_points", 0) or 0), 2),
             "points": round(player.points, 2),
             "total_points": round(player.total_points, 2),
             "avg_points": round(player.avg_points, 2),
@@ -124,7 +133,11 @@ def get_waiver_recommendations(league, my_team_name=None, week=None):
         def per_game(player):
             if played and (player.avg_points or 0) > 0:
                 return float(player.avg_points)
-            return float(getattr(player, "projected_total_points", 0) or 0) / 17.0
+            try:
+                from .ros import ros_projection
+                return ros_projection(player, league) / 17.0
+            except Exception:
+                return float(getattr(player, "projected_total_points", 0) or 0) / 17.0
 
         weakest_at_pos = {}
         for pos, players in roster_by_pos.items():

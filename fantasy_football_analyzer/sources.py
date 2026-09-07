@@ -205,6 +205,120 @@ def describe_scoring(league):
     return label
 
 
+FANTASYPROS_PROJECTIONS_URL = "https://api.fantasypros.com/public/v2/json/nfl/{year}/projections"
+PROJECTION_POSITIONS = ("QB", "RB", "WR", "TE", "K")
+# FantasyPros stat line field -> ESPN statId (deterministic items only; per-game
+# bonuses like 100-yard games are not projectable from season totals and ESPN's
+# own projections leave them out too, so both sources stay comparable)
+_FP_STAT_IDS = {
+    "pass_yds": 3, "pass_tds": 4, "pass_ints": 20,
+    "rush_yds": 24, "rush_tds": 25,
+    "rec_rec": 53, "rec_yds": 42, "rec_tds": 43,
+}
+FUMBLE_LOST_SHARE = 0.5   # FantasyPros projects total fumbles; roughly half are lost
+CONSENSUS_ESPN_WEIGHT = 0.5   # ESPN vs FantasyPros consensus in the blended projection
+
+
+def fetch_fantasypros_projections(year, api_key=None):
+    """{(normalized_name, position): stats dict} of season projections."""
+    api_key = api_key or os.environ.get("FANTASYPROS_API_KEY")
+    if not api_key or not year:
+        return {}
+
+    def load():
+        out = {}
+        for pos in PROJECTION_POSITIONS:
+            resp = requests.get(
+                FANTASYPROS_PROJECTIONS_URL.format(year=year),
+                params={"position": pos, "week": 0, "scoring": "PPR"},
+                headers={"x-api-key": api_key},
+                timeout=REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            for pl in resp.json().get("players", []):
+                name = pl.get("name") or ""
+                position = (pl.get("position_id") or pos).upper()
+                stats = pl.get("stats") or {}
+                if name and stats:
+                    out[(normalize_name(name), position)] = stats
+        return out
+
+    return _cached(f"fp_proj_{year}", FP_TTL, load) or {}
+
+
+def league_stat_points(league):
+    """{statId: {"base": pts, "by_pos": {pos: pts}}} for the deterministic items."""
+    raw = getattr(getattr(league, "settings", None), "_raw_scoring_settings", None) or {}
+    table = {}
+    for item in raw.get("scoringItems", []) or []:
+        sid = item.get("statId")
+        by_pos = {}
+        for pid, pts in (item.get("pointsOverrides") or {}).items():
+            pos = _POS_IDS.get(int(pid)) if str(pid).isdigit() else None
+            if pos:
+                by_pos[pos] = float(pts or 0)
+        table[sid] = {"base": float(item.get("points") or 0), "by_pos": by_pos}
+    # Sensible defaults when a league has no raw settings (tests, CLI)
+    table.setdefault(3, {"base": 0.04, "by_pos": {}})
+    table.setdefault(4, {"base": 4.0, "by_pos": {}})
+    table.setdefault(20, {"base": -2.0, "by_pos": {}})
+    table.setdefault(24, {"base": 0.1, "by_pos": {}})
+    table.setdefault(25, {"base": 6.0, "by_pos": {}})
+    table.setdefault(42, {"base": 0.1, "by_pos": {}})
+    table.setdefault(43, {"base": 6.0, "by_pos": {}})
+    table.setdefault(53, {"base": 1.0, "by_pos": {}})
+    table.setdefault(72, {"base": -2.0, "by_pos": {}})
+    return table
+
+
+def score_stat_line(stats, position, league):
+    """Fantasy points for a FantasyPros season stat line under this league's rules."""
+    if position == "K":
+        # Decimal-per-yard kicking can't be scored without distances; FP's own
+        # standard points are close enough for a $1-2 position
+        return float(stats.get("points") or 0)
+    table = league_stat_points(league)
+
+    def pts(sid):
+        row = table.get(sid, {"base": 0.0, "by_pos": {}})
+        return row["by_pos"].get(position, row["base"])
+
+    total = 0.0
+    for field, sid in _FP_STAT_IDS.items():
+        total += float(stats.get(field) or 0) * pts(sid)
+    total += float(stats.get("fumbles") or 0) * FUMBLE_LOST_SHARE * pts(72)
+    for field, sid in (("2pt_tds", 44),):
+        total += float(stats.get(field) or 0) * pts(sid)
+    return round(total, 2)
+
+
+def consensus_projection_map(league):
+    """{(normalized_name, position): FantasyPros season points under this
+    league's scoring}, cached per league-year. Empty without a key."""
+    year = getattr(league, "year", None)
+    key = f"fp_scored_{getattr(league, 'league_id', 0)}_{year}"
+
+    def load():
+        raw = fetch_fantasypros_projections(year)
+        return {k: score_stat_line(stats, k[1], league) for k, stats in raw.items()}
+
+    return _cached(key, FP_TTL, load) or {}
+
+
+def blended_projection(name, position, espn_points, league, fp_map=None):
+    """ESPN and FantasyPros consensus blended (CONSENSUS_ESPN_WEIGHT); falls back
+    to whichever exists. Returns (blended, fp_points_or_None)."""
+    fp_map = fp_map if fp_map is not None else consensus_projection_map(league)
+    fp = fp_map.get((normalize_name(name or ""), position))
+    espn = float(espn_points or 0)
+    if fp is None:
+        return espn, None
+    if espn <= 0:
+        return float(fp), float(fp)
+    w = CONSENSUS_ESPN_WEIGHT
+    return round(w * espn + (1 - w) * float(fp), 2), float(fp)
+
+
 def fetch_fantasypros_rankings(year, scoring="PPR", api_key=None):
     """{(normalized_name, position): {ecr, tier, pos_rank, best, worst}} or {}."""
     api_key = api_key or os.environ.get("FANTASYPROS_API_KEY")
