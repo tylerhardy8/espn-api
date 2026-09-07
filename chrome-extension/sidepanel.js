@@ -76,6 +76,7 @@ function resetLeagueState() {
   teams = [];
   tradesLoaded = false;
   waiversLoaded = false;
+  rostersCache = null;
   $("advice").textContent = "Press Advise now — or wait for the next pick with auto on.";
   $("trade-partners").innerHTML = "";
   $("trade-advice-card").hidden = true;
@@ -409,9 +410,69 @@ async function markDrafted(playerId, name, undo = false, bid = null) {
 }
 
 // ---------------------------------------------------------------- trades
+let rostersCache = null;
+
+function pkgHtml(p, extra = "") {
+  return `<div class="pkg">
+    <span class="give">${esc(p.give_players.join(" + "))}</span> → <span class="get">${esc(p.receive_players.join(" + "))}</span>${extra}
+    <div class="nums">me ${p.my_net >= 0 ? "+" : ""}${p.my_net} · them ${p.their_net >= 0 ? "+" : ""}${p.their_net} · market ${Math.round(p.market_ratio * 100)}% · <span class="accept">accept ${Math.round((p.acceptance ?? 0) * 100)}%</span></div>
+    <div class="nums">${esc(p.reason || "")}</div>
+  </div>`;
+}
+
+async function loadRosters() {
+  if (rostersCache) return rostersCache;
+  rostersCache = await api("/api/trade-rosters?team=" + encodeURIComponent(myTeam));
+  const mine = rostersCache.rosters[myTeam] || [];
+  $("shop-select").innerHTML = `<option value="">Shop one of my players…</option>` +
+    mine.map((c) => `<option value="${esc(c.name)}">${esc(c.name)} (${esc(c.position)} ${Math.round(c.ros)})</option>`).join("");
+  $("eval-partner").innerHTML = `<option value="">partner…</option>` +
+    Object.keys(rostersCache.rosters).filter((t) => t !== myTeam).sort().map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  $("eval-give").innerHTML = mine.map((c) => `<label><input type="checkbox" value="${esc(c.name)}"> ${esc(c.name)} <span class="pos">${esc(c.position)}</span> ${Math.round(c.ros)}</label>`).join("");
+  return rostersCache;
+}
+
+async function targetPlayer() {
+  const name = $("target-name").value.trim();
+  if (!name) return;
+  $("tool-result").innerHTML = `<div class="meta">Working out packages…</div>`;
+  try {
+    const d = await api("/api/trade-target?team=" + encodeURIComponent(myTeam) + "&player=" + encodeURIComponent(name));
+    const owner = d.owner || {};
+    $("tool-result").innerHTML = `<div class="meta"><b>${esc(d.player.name)}</b> is on ${esc(d.partner)}${owner.trades_per_season != null ? ` (${owner.trades_per_season} trades/yr)` : ""}</div>` +
+      (d.packages.map((p) => pkgHtml(p)).join("") || `<div class="meta">No package they'd plausibly accept.</div>`);
+  } catch (e) { $("tool-result").innerHTML = `<div class="meta">${esc(e.message)}</div>`; }
+}
+
+async function shopPlayer() {
+  const name = $("shop-select").value;
+  if (!name) return;
+  $("tool-result").innerHTML = `<div class="meta">Shopping ${esc(name)}…</div>`;
+  try {
+    const d = await api("/api/trade-shop?team=" + encodeURIComponent(myTeam) + "&player=" + encodeURIComponent(name));
+    $("tool-result").innerHTML = `<div class="meta">Best returns for <b>${esc(d.player.name)}</b></div>` +
+      (d.offers.map((p) => pkgHtml(p, ` <span class="who">— ${esc(p.partner)}</span>`)).join("") || `<div class="meta">Nothing beats keeping him.</div>`);
+  } catch (e) { $("tool-result").innerHTML = `<div class="meta">${esc(e.message)}</div>`; }
+}
+
+async function evalOffer() {
+  const partner = $("eval-partner").value;
+  const give = [...document.querySelectorAll("#eval-give input:checked")].map((i) => i.value);
+  const get = [...document.querySelectorAll("#eval-get input:checked")].map((i) => i.value);
+  if (!partner || !give.length || !get.length) { $("tool-result").innerHTML = `<div class="meta">Pick a partner and players on both sides.</div>`; return; }
+  $("tool-result").innerHTML = `<div class="meta">Judging…</div>`;
+  try {
+    const d = await postJson("/api/trade-eval", { team_name: myTeam, partner, give, receive: get });
+    if (d.error) throw new Error(d.error);
+    $("tool-result").innerHTML = `<div class="verdict ${esc(d.verdict)}">${esc(d.verdict)}</div>` + pkgHtml(d.offer) +
+      (d.counters.length ? `<div class="meta">Counters</div>` + d.counters.map((c) => pkgHtml(c, ` <span class="who">(${c.type === "ask_add" ? "ask for" : "add"} ${esc(c.player)})</span>`)).join("") : "");
+  } catch (e) { $("tool-result").innerHTML = `<div class="meta">${esc(e.message)}</div>`; }
+}
+
 async function loadTrades() {
   if (!myTeam) return;
   tradesLoaded = true;
+  loadRosters().catch(() => {});
   $("trade-needs").innerHTML = `<span class="meta">Analyzing rosters…</span>`;
   $("trade-partners").innerHTML = "";
   try {
@@ -422,13 +483,14 @@ async function loadTrades() {
     const cards = (d.matches || []).map((m) => `
       <section class="card partner">
         <div class="card-head">
-          <span>${esc(m.partner)}<span class="rec">${esc(m.record)} · fit ${m.fit_score}</span></span>
-          <span class="meta">needs ${esc((m.their_needs || []).join(", ") || "–")}</span>
+          <span>${esc(m.partner)}<span class="rec">${esc(m.record)} · fit ${m.fit_score}${m.trades_per_season != null ? ` · ${m.trades_per_season} trades/yr` : ""}</span></span>
+          <span class="meta">needs ${esc((m.their_needs || []).join(", ") || "–")}${(m.their_surplus || []).length ? ` · surplus ${esc(m.their_surplus.slice(0, 2).join(", "))}` : ""}</span>
         </div>
         ${m.proposals.map((p) => `
           <div class="proposal">
             <span class="give">${esc(p.give_players.join(" + "))}</span> → <span class="get">${esc(p.receive_players.join(" + "))}</span>
-            <div class="nums">me ${p.my_net >= 0 ? "+" : ""}${p.my_net} · them ${p.their_net >= 0 ? "+" : ""}${p.their_net} · market ${Math.round(p.market_ratio * 100)}%</div>
+            <div class="nums">me ${p.my_net >= 0 ? "+" : ""}${p.my_net} · them ${p.their_net >= 0 ? "+" : ""}${p.their_net} · market ${Math.round(p.market_ratio * 100)}%${p.acceptance != null ? ` · <span class="accept">accept ${Math.round(p.acceptance * 100)}%</span>` : ""}</div>
+            <div class="nums">${esc(p.reason || "")}</div>
           </div>`).join("")}
       </section>`);
     $("trade-partners").innerHTML = cards.join("") ||
@@ -553,7 +615,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("block-clear").addEventListener("click", async () => {
     try { renderBlock(await postJson("/api/auction-live", { clear: true })); } catch (e) { /* ignore */ }
   });
-  $("trades-refresh").addEventListener("click", loadTrades);
+  $("trades-refresh").addEventListener("click", () => { rostersCache = null; loadTrades(); });
+  $("target-go").addEventListener("click", targetPlayer);
+  $("target-name").addEventListener("keydown", (ev) => { if (ev.key === "Enter") targetPlayer(); });
+  $("shop-go").addEventListener("click", shopPlayer);
+  $("eval-partner").addEventListener("change", (ev) => {
+    const theirs = (rostersCache && rostersCache.rosters[ev.target.value]) || [];
+    $("eval-get").innerHTML = theirs.map((c) => `<label><input type="checkbox" value="${esc(c.name)}"> ${esc(c.name)} <span class="pos">${esc(c.position)}</span> ${Math.round(c.ros)}</label>`).join("");
+  });
+  $("eval-go").addEventListener("click", evalOffer);
   $("trades-ai").addEventListener("click", tradesAi);
   $("waivers-refresh").addEventListener("click", loadWaivers);
   $("waivers-ai").addEventListener("click", waiversAi);

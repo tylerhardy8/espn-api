@@ -291,8 +291,23 @@ def _acceptance(their_gain, market_ratio):
 
 
 def find_trade_matches(my_team, league, pool=None, max_partners=6,
-                       max_proposals_per_partner=3):
-    """Propose trades the way leagues actually make them.
+                       max_proposals_per_partner=3, intel=None):
+    """Propose trades the way leagues actually make them (week-by-week
+    trade engine; see trade_engine.TradeEngine). Falls back to the
+    season-total engine below if the weekly engine fails."""
+    try:
+        from .trade_engine import TradeEngine
+        engine = TradeEngine(league, pool=pool, intel=intel)
+        return engine.matches(my_team, max_partners=max_partners,
+                              max_proposals_per_partner=max_proposals_per_partner)
+    except Exception:
+        return _find_trade_matches_season(my_team, league, pool=pool, max_partners=max_partners,
+                                          max_proposals_per_partner=max_proposals_per_partner)
+
+
+def _find_trade_matches_season(my_team, league, pool=None, max_partners=6,
+                               max_proposals_per_partner=3):
+    """Season-total proposal engine (fallback).
 
     A trade exists when the same players are worth different amounts to
     different rosters (team_context_value: optimal lineup + depth insurance).

@@ -131,6 +131,29 @@
       </div>
       <div id="trade-needs" class="chips"><span class="meta">Loading…</span></div>
     </section>
+    <section class="card">
+      <div class="card-head"><span>Trade tools</span></div>
+      <div class="tools">
+        <div class="tool-row">
+          <input id="target-name" type="text" placeholder="Target a player (e.g. DeVonta Smith)">
+          <button id="target-go">what would it take?</button>
+        </div>
+        <div class="tool-row">
+          <select id="shop-select"><option value="">Shop one of my players…</option></select>
+          <button id="shop-go">offers</button>
+        </div>
+        <details class="eval">
+          <summary>Evaluate an offer</summary>
+          <div class="tool-row"><select id="eval-partner"><option value="">partner…</option></select></div>
+          <div class="two-col">
+            <div><div class="meta">I give</div><div id="eval-give" class="picklist"></div></div>
+            <div><div class="meta">I get</div><div id="eval-get" class="picklist"></div></div>
+          </div>
+          <button id="eval-go" class="primary">judge it</button>
+        </details>
+      </div>
+      <div id="tool-result" class="tool-result"></div>
+    </section>
     <section id="trade-advice-card" class="card" hidden>
       <div class="card-head"><span>Claude's trade analysis</span></div>
       <div id="trade-advice-meta" class="meta"></div>

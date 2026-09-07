@@ -573,7 +573,15 @@ def trade_ai_advice(config, league, team_name):
                 ai_pool = get_valued_pool(league, config)[0]
             except Exception:
                 ai_pool = {}
-            matches = find_trade_matches(my_team, league, pool=ai_pool)
+            try:
+                from .helpers import get_league_intel_cached
+                from ..trade_engine import TradeEngine, format_trades_for_ai
+                engine = TradeEngine(league, pool=ai_pool, intel=get_league_intel_cached(config))
+                matches = engine.matches(my_team)
+                context_lines.append("\n" + format_trades_for_ai(engine, my_team, matches))
+                matches = []  # narrative already added
+            except Exception:
+                matches = find_trade_matches(my_team, league, pool=ai_pool)
             if matches:
                 context_lines.append(
                     "\nCOMPUTED TRADE MATCHES (both starting lineups improve "

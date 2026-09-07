@@ -232,3 +232,14 @@ button.danger { border-color: rgba(224, 82, 82, 0.5); color: #ff8a8a; }
 .plan { margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.5; }
 .plan .t { display: inline-block; margin-right: 6px; color: var(--text); }
 .plan .pace { color: var(--gold); }
+.tools .tool-row { display: flex; gap: 4px; margin-bottom: 6px; }
+.tools .tool-row input, .tools .tool-row select { flex: 1; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+.eval summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.picklist { max-height: 160px; overflow-y: auto; font-size: 11px; }
+.picklist label { display: block; padding: 1px 0; cursor: pointer; }
+.tool-result { margin-top: 6px; font-size: 12px; }
+.tool-result .pkg { padding: 5px 0; border-top: 1px solid var(--border); }
+.tool-result .pkg:first-child { border-top: 0; }
+.tool-result .verdict { font-weight: 700; }
+.verdict.ACCEPT, .verdict.FAIR { color: #6fd39a; } .verdict.COUNTER { color: var(--gold); } .verdict.DECLINE { color: #ff8a8a; }
+.accept { color: var(--muted); font-size: 11px; }

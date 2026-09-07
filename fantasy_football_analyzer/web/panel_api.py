@@ -435,6 +435,103 @@ def _auction_payload(live, league, config, pool, team_name):
 
 _trade_cache = {}
 _TRADE_TTL = 180
+_engine_cache = {}   # league_id -> (engine, built_at)
+_ENGINE_TTL = 120
+
+
+def _engine(league, config, fresh=False):
+    """A TradeEngine for the active league (rosters + pool + intel), cached briefly."""
+    from ..trade_engine import TradeEngine
+    cached = _engine_cache.get(league.league_id)
+    if cached and not fresh and time.time() - cached[1] < _ENGINE_TTL:
+        return cached[0]
+    try:
+        pool = get_valued_pool(league, config)[0]
+    except Exception:
+        pool = {}
+    intel = get_league_intel_cached(config)
+    if intel is None:
+        warm_league_intel(config)
+    engine = TradeEngine(league, pool=pool, intel=intel)
+    _engine_cache[league.league_id] = (engine, time.time())
+    return engine
+
+
+def _my_team(league, team_name):
+    return next((t for t in league.teams if t.team_name.lower() == (team_name or "").lower()), None)
+
+
+@bp.route("/api/trade-rosters")
+def api_trade_rosters():
+    """Every roster as cards (for the offer builder), plus my needs/surplus."""
+    config, league, err = get_league_or_redirect()
+    if err:
+        return jsonify({"error": "Could not connect to league"}), 500
+    team_name = request.args.get("team") or config.get("team_name") or ""
+    engine = _engine(league, config)
+    out = {"team": team_name, "rosters": {}}
+    for t in league.teams:
+        cards = engine.cards(t)
+        out["rosters"][t.team_name] = [
+            {"player_id": c["player_id"], "name": c["name"], "position": c["position"],
+             "ros": c["ros"], "bye": c["bye"], "market": c["market"]}
+            for c in sorted(cards, key=lambda c: -c["ros"])
+        ]
+    me = _my_team(league, team_name)
+    if me is not None:
+        out["needs"] = engine.needs(me)
+        out["surplus"] = engine.surplus(me)
+    return jsonify(out)
+
+
+@bp.route("/api/trade-target")
+def api_trade_target():
+    """What would it take to get ?player= from whoever has him."""
+    config, league, err = get_league_or_redirect()
+    if err:
+        return jsonify({"error": "Could not connect to league"}), 500
+    team_name = request.args.get("team") or config.get("team_name") or ""
+    me = _my_team(league, team_name)
+    if me is None:
+        return jsonify({"error": f"team {team_name!r} not found"}), 404
+    result = _engine(league, config).target(me, request.args.get("player", ""))
+    if not result:
+        return jsonify({"error": "player not found on another roster"}), 404
+    return jsonify(result)
+
+
+@bp.route("/api/trade-shop")
+def api_trade_shop():
+    """What could I get for ?player= across the league."""
+    config, league, err = get_league_or_redirect()
+    if err:
+        return jsonify({"error": "Could not connect to league"}), 500
+    team_name = request.args.get("team") or config.get("team_name") or ""
+    me = _my_team(league, team_name)
+    if me is None:
+        return jsonify({"error": f"team {team_name!r} not found"}), 404
+    result = _engine(league, config).shop(me, request.args.get("player", ""))
+    if not result:
+        return jsonify({"error": "player not found on my roster"}), 404
+    return jsonify(result)
+
+
+@bp.route("/api/trade-eval", methods=["POST", "OPTIONS"])
+def api_trade_eval():
+    """Judge an offer: {partner, give:[names], receive:[names]} -> verdict + counters."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    config, league, err = get_league_or_redirect()
+    if err:
+        return jsonify({"error": "Could not connect to league"}), 500
+    payload = request.get_json(silent=True) or {}
+    team_name = payload.get("team_name") or config.get("team_name") or ""
+    me = _my_team(league, team_name)
+    other = _my_team(league, payload.get("partner", ""))
+    if me is None or other is None:
+        return jsonify({"error": "team or partner not found"}), 404
+    result = _engine(league, config).evaluate(me, other, payload.get("give") or [], payload.get("receive") or [])
+    return jsonify(result)
 
 
 @bp.route("/api/trades")
@@ -460,9 +557,12 @@ def api_trades():
     except Exception:
         pool = {}
     try:
-        matches = find_trade_matches(my_team, league, pool=pool)
+        engine = _engine(league, config, fresh=bool(request.args.get("fresh")))
+        matches = engine.matches(my_team)
+        lineup_needs = engine.needs(my_team)
+        surplus = engine.surplus(my_team)
     except Exception as e:
-        matches = []
+        matches, lineup_needs, surplus = [], {}, []
         needs_err = str(e)
     else:
         needs_err = None
@@ -470,6 +570,8 @@ def api_trades():
         "team": my_team.team_name,
         "record": f"{my_team.wins}-{my_team.losses}",
         "needs": needs,
+        "lineup_needs": lineup_needs,
+        "surplus": surplus,
         "matches": matches,
         "ai_available": ai_available(config),
     }
