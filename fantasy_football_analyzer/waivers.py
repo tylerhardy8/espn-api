@@ -116,16 +116,24 @@ def get_waiver_recommendations(league, my_team_name=None, week=None):
         for player in my_team.roster:
             roster_by_pos[player.position].append(player)
 
+        # Per-game metric: actual average once games are played, else the
+        # season projection prorated (pre-season / week 1 everything is 0)
+        played = any((p.total_points or 0) > 0 for p in my_team.roster)
+
+        def per_game(player):
+            if played and (player.avg_points or 0) > 0:
+                return float(player.avg_points)
+            return float(getattr(player, "projected_total_points", 0) or 0) / 17.0
+
         weakest_at_pos = {}
         for pos, players in roster_by_pos.items():
             if players:
                 # Compare like with like: the upgrade math below is per-game
-                # average, so the weakest player is the lowest average
-                weakest = min(players, key=lambda p: (p.avg_points or 0, p.total_points or 0))
+                weakest = min(players, key=per_game)
                 weakest_at_pos[pos] = {
                     "name": weakest.name,
                     "total_points": weakest.total_points,
-                    "avg_points": weakest.avg_points,
+                    "avg_points": round(per_game(weakest), 2),
                 }
 
         for agent in all_agents:
@@ -137,7 +145,8 @@ def get_waiver_recommendations(league, my_team_name=None, week=None):
             if not current_weakest:
                 continue
 
-            upgrade = round(agent["avg_points"] - current_weakest["avg_points"], 2)
+            agent_pg = agent["avg_points"] if (played and agent["avg_points"] > 0) else round(agent["projected_points"] / 17.0, 2)
+            upgrade = round(agent_pg - current_weakest["avg_points"], 2)
             if upgrade > 0:
                 recommendations.append({
                     **agent,

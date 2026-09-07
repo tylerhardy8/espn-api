@@ -648,16 +648,67 @@ def api_waivers():
         news = _news_json(match_news_to_players(items, names))
     except Exception:
         pass
+    faab, bids_history = None, []
+    try:
+        faab, bids_history = attach_faab_bids(league, config, team_name, recommendations[:12], top_agents)
+    except Exception as e:
+        faab = {"error": str(e)}
     payload = {
         "team": team_name, "week": week,
         "recommendations": recommendations[:12],
         "streamers": streamers,
         "top_agents": top_agents,
         "news": news,
+        "faab": faab,
+        "recent_bids": bids_history[:10],
         "ai_available": ai_available(config),
     }
     _waiver_cache[key] = (payload, time.time())
     return jsonify(payload)
+
+
+def attach_faab_bids(league, config, team_name, recommendations, top_agents):
+    """Add a suggested FAAB bid to each recommendation (mutates) and return
+    (faab_state_with_my_row, bid_history)."""
+    from ..faab import faab_state, bid_history, suggest_bid
+    from ..ros import ros_projection
+    from ..lineup import marginal_value
+    from ..auction import league_profile
+    state = faab_state(league)
+    if not state["enabled"]:
+        return state, []
+    history = bid_history(league)
+    engine = _engine(league, config)
+    me = _my_team(league, team_name)
+    profile = league_profile(league)
+    # Free-agent pool with ROS points (replacement levels come from this)
+    try:
+        agents = league.free_agents(size=150)
+    except Exception:
+        agents = []
+    fa_cards = [{"position": getattr(a, "position", ""), "ros": ros_projection(a, league), "name": a.name}
+                for a in agents]
+    fa_by_name = {c["name"]: c for c in fa_cards}
+    rival_needs = {}
+    for t in league.teams:
+        if me is not None and t.team_id == me.team_id:
+            continue
+        try:
+            rival_needs[t.team_name] = set(engine.needs(t))
+        except Exception:
+            rival_needs[t.team_name] = set()
+    mine = [{"position": c["position"], "value": c["ros"]} for c in engine.cards(me)] if me is not None else []
+    for rec in recommendations:
+        card = fa_by_name.get(rec["name"]) or {"position": rec.get("position", ""), "ros": float(rec.get("projected_points", 0)), "name": rec["name"]}
+        marginal = None
+        if mine:
+            marginal = round(marginal_value(mine, {"position": card["position"], "value": card["ros"]}, profile), 1)
+        rec["faab"] = suggest_bid(card, team_name, league, fa_cards, my_marginal=marginal,
+                                  rival_needs=rival_needs, history=history)
+        rec["lineup_gain"] = marginal
+    state["mine"] = next((t for t in state["teams"] if t["team"].lower() == team_name.lower()), None)
+    state["history_count"] = len(history)
+    return state, history
 
 
 @bp.route("/api/waivers-ai", methods=["POST", "OPTIONS"])

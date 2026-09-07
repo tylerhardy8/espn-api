@@ -539,9 +539,24 @@ async function loadWaivers() {
     const d = await api("/api/waivers?team=" + encodeURIComponent(myTeam) + (week ? "&week=" + week : ""));
     $("waiver-week").value = d.week;
     $("waiver-meta").textContent = `${d.recommendations.length} upgrades · ${d.top_agents.length} top agents`;
-    $("waiver-recs").innerHTML = d.recommendations.map((r) =>
-      agentLine(r, `<span class="sub">+${r.upgrade_per_week}/wk over ${esc(r.replaces)}</span>${newsFor(d.news, r.name)}`)
-    ).join("") || `<div class="meta">No clear upgrades.</div>`;
+    const f = d.faab;
+    if (f && f.enabled) {
+      const mine = f.mine ? `You: <strong>$${f.mine.remaining}</strong> of $${f.budget}` : `Budget $${f.budget}`;
+      const rivals = (f.teams || []).filter((t) => !f.mine || t.team !== f.mine.team).slice(0, 4)
+        .map((t) => `<span class="t">${esc(t.team.slice(0, 14))} $${t.remaining}</span>`).join("");
+      const hist = (d.recent_bids || []).slice(0, 3).map((h) => `${esc(h.player)} $${h.bid}`).join(", ");
+      $("faab-row").hidden = false;
+      $("faab-row").innerHTML = `FAAB · ${mine} · ${rivals}${hist ? `<div>Recent wins: ${hist}</div>` : ""}`;
+    } else {
+      $("faab-row").hidden = true;
+    }
+    $("waiver-recs").innerHTML = d.recommendations.map((r) => {
+      const b = r.faab;
+      const bid = b ? (b.bid > 0
+        ? `<span class="flag trend">bid $${b.bid}</span><span class="sub"> (${esc(b.tier)}, rival ~$${b.expected_rival})</span>`
+        : `<span class="flag">skip</span>`) : "";
+      return agentLine(r, `<span class="sub">+${r.upgrade_per_week}/wk over ${esc(r.replaces)}${r.lineup_gain != null ? ` · lineup ${r.lineup_gain >= 0 ? "+" : ""}${r.lineup_gain}` : ""}</span> ${bid}${newsFor(d.news, r.name)}`);
+    }).join("") || `<div class="meta">No clear upgrades.</div>`;
     $("waiver-streamers").innerHTML = Object.entries(d.streamers || {}).map(([pos, lst]) =>
       `<div class="pos-head">${esc(pos)}</div>` + lst.map((a) => agentLine(a, `<span class="sub">score ${a.streamer_score}</span>`)).join("")
     ).join("") || `<div class="meta">–</div>`;

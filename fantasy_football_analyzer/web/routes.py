@@ -691,6 +691,22 @@ def waiver_ai_advice(config, league, team_name, week):
     from ..waivers import format_waiver_report
 
     report = format_waiver_report(league, my_team_name=team_name, week=week)
+    try:
+        from .panel_api import attach_faab_bids
+        recs = get_waiver_recommendations(league, my_team_name=team_name, week=week)[:10]
+        faab, history = attach_faab_bids(league, config, team_name, recs, [])
+        if faab and faab.get("enabled"):
+            mine = faab.get("mine") or {}
+            lines = [f"\nFAAB: ${faab['budget']} budget; I have ${mine.get('remaining', '?')} left. "
+                     f"Rivals' remaining: " + ", ".join(f"{t['team']} ${t['remaining']}" for t in faab['teams'][:6])
+                     + f". Winning bids so far this season: {len(history)}"
+                     + (" (" + ", ".join(f"{h['player']} ${h['bid']}" for h in history[:6]) + ")" if history else "") + "."]
+            lines.append("Suggested bids (model): " + "; ".join(
+                f"{r['name']} ${r['faab']['bid']} ({r['faab']['tier']}, rival ~${r['faab']['expected_rival']})"
+                for r in recs if r.get("faab")))
+            report += "\n".join(lines)
+    except Exception:
+        pass
     prompt = "Here is my league's waiver wire report"
     if team_name:
         prompt += f" (I manage '{team_name}')"

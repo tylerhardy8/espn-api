@@ -135,7 +135,16 @@ def empty_starting_slots(cards, profile, week):
 
 def owner_profile(team, league, intel=None):
     """Tendencies that shape what an owner accepts."""
-    prof = {"manager": None, "trades_per_season": None, "pos_pref": {}, "activity": 1.0}
+    prof = {"manager": None, "trades_per_season": None, "pos_pref": {}, "activity": 1.0,
+            "faab_remaining": None, "faab_share": None}
+    try:
+        budget = int(getattr(league.settings, "acquisition_budget", 0) or 0)
+        if budget and getattr(league.settings, "faab", False):
+            spent = int(getattr(team, "acquisition_budget_spent", 0) or 0)
+            prof["faab_remaining"] = max(0, budget - spent)
+            prof["faab_share"] = prof["faab_remaining"] / budget
+    except Exception:
+        pass
     try:
         from .historical import get_manager_key
         prof["manager"] = get_manager_key(team)[0]
@@ -173,7 +182,10 @@ def acceptance(their_gain, ratio, owner, net_bodies):
     else:
         market_factor = 0.0
     crunch = max(0.0, 1.0 - 0.15 * max(0, net_bodies))
-    return min(1.0, gain_factor * market_factor * owner.get("activity", 1.0) * crunch)
+    # Short on FAAB and sending more bodies than they get: depth is hard to replace
+    faab_share = owner.get("faab_share")
+    depth_pen = 0.85 if (faab_share is not None and faab_share < 0.25 and net_bodies < 0) else 1.0
+    return min(1.0, gain_factor * market_factor * owner.get("activity", 1.0) * crunch * depth_pen)
 
 
 # ---------------------------------------------------------------------------
@@ -268,11 +280,39 @@ def _dedupe(proposals):
 # Public API
 # ---------------------------------------------------------------------------
 
+KEEPER_VALUE_RATIO = 2.5   # market value / draft price above which a player is a keeper-tag candidate
+
+
+def draft_prices(league):
+    """{playerId: auction price} from the league's draft feed."""
+    out = {}
+    for p in getattr(league, "draft", None) or []:
+        if getattr(p, "bid_amount", 0):
+            out[p.playerId] = int(p.bid_amount)
+    return out
+
+
+def keeper_flags(cards, prices):
+    """Players whose draft price is far below their market value — the ones
+    worth a 2027 franchise tag. Trading them forfeits that (league rule:
+    only drafted, never-traded players are tag-eligible)."""
+    flags = []
+    for c in cards:
+        price = prices.get(c["player_id"])
+        if not price:
+            continue
+        if c["market"] >= KEEPER_VALUE_RATIO * price and c["market"] >= 15:
+            flags.append(f"{c['name']} (drafted ${price}, worth ${c['market']:.0f})")
+    return flags
+
+
 class TradeEngine:
     def __init__(self, league, pool=None, intel=None, profile=None):
         self.league = league
         self.pool = pool or {}
         self.intel = intel
+        self.prices = draft_prices(league)
+        self.keeper_rule = bool(self.prices)   # 2027 tag: drafted & never traded
         if profile is None:
             from .auction import league_profile
             profile = league_profile(league)
@@ -348,6 +388,23 @@ class TradeEngine:
         core.sort(key=lambda c: marginal[c["player_id"]])
         return [c["name"] for c in core if marginal[c["player_id"]] < 0.25 * c["ros"]][:4]
 
+    def _flag(self, p, give, get):
+        """Keeper-tag consequences on both sides (drafted, never traded)."""
+        if not self.keeper_rule:
+            return p
+        lose = keeper_flags(give, self.prices)
+        theirs = keeper_flags(get, self.prices)
+        p["keeper_forfeit"] = lose
+        p["keeper_forfeit_theirs"] = theirs
+        notes = []
+        if lose:
+            notes.append("forfeits your 2027 tag on " + ", ".join(lose))
+        if theirs:
+            notes.append("they forfeit their tag on " + ", ".join(theirs))
+        if notes:
+            p["reason"] += "; " + "; ".join(notes)
+        return p
+
     def partner_proposals(self, my_team, other, allow_two_for_two=True, max_proposals=4):
         mine, theirs = self.cards(my_team), self.cards(other)
         my_pk, _ = _candidates(mine, self.profile, self.weights, self.cache)
@@ -358,7 +415,7 @@ class TradeEngine:
             for get in their_pk:
                 if len(give) > 1 and len(get) > 1 and not allow_two_for_two:
                     continue
-                p = _proposal(mine, theirs, give, get, self.profile, self.league, self.weights, self.cache, owner)
+                p = self._flag(_proposal(mine, theirs, give, get, self.profile, self.league, self.weights, self.cache, owner), give, get)
                 if p["my_net"] >= MIN_MY_GAIN and p["score"] >= MIN_SCORE:
                     out.append(p)
         return _dedupe(out)[:max_proposals]
@@ -396,7 +453,7 @@ class TradeEngine:
             mine, theirs = self.cards(my_team), self.cards(other)
             my_pk, _ = _candidates(mine, self.profile, self.weights, self.cache, max_singles=12, max_pairs=30)
             owner = self.owner(other)
-            props = [_proposal(mine, theirs, give, [card], self.profile, self.league, self.weights, self.cache, owner)
+            props = [self._flag(_proposal(mine, theirs, give, [card], self.profile, self.league, self.weights, self.cache, owner), give, [card])
                      for give in my_pk]
             # Also try pairing the target with one of their bench pieces (2-for-2 style asks)
             props = [p for p in props if p["acceptance"] > 0]
@@ -419,7 +476,7 @@ class TradeEngine:
             their_pk, _ = _candidates(theirs, self.profile, self.weights, self.cache, max_singles=12, max_pairs=30)
             owner = self.owner(other)
             for get in their_pk:
-                p = _proposal(mine, theirs, [card], get, self.profile, self.league, self.weights, self.cache, owner)
+                p = self._flag(_proposal(mine, theirs, [card], get, self.profile, self.league, self.weights, self.cache, owner), [card], get)
                 if p["acceptance"] > 0 and p["my_net"] > 0:
                     p["partner"] = other.team_name
                     offers.append(p)
@@ -434,7 +491,7 @@ class TradeEngine:
         if not give or not get:
             return {"error": "players not found on those rosters"}
         owner = self.owner(other)
-        p = _proposal(mine, theirs, give, get, self.profile, self.league, self.weights, self.cache, owner)
+        p = self._flag(_proposal(mine, theirs, give, get, self.profile, self.league, self.weights, self.cache, owner), give, get)
         if p["my_net"] >= 3 and p["acceptance"] >= 0.5:
             verdict = "ACCEPT" if p["my_net"] >= 3 else "FAIR"
         elif p["my_net"] < 0:
@@ -448,7 +505,7 @@ class TradeEngine:
             # Ask for one more piece from their bench that closes my gap
             for extra in sorted((c for c in theirs if c["player_id"] not in get_ids and c["position"] in CORE),
                                 key=lambda c: c["market"]):
-                q = _proposal(mine, theirs, give, get + [extra], self.profile, self.league, self.weights, self.cache, owner)
+                q = self._flag(_proposal(mine, theirs, give, get + [extra], self.profile, self.league, self.weights, self.cache, owner), give, get + [extra])
                 if q["my_net"] >= 3 and q["acceptance"] > 0.3:
                     counters.append({"type": "ask_add", "player": extra["name"], **q})
                     if len(counters) >= 2:
@@ -457,7 +514,7 @@ class TradeEngine:
             # Sweeten with my lowest-marginal piece that doesn't hurt me
             for extra in sorted((c for c in mine if c["player_id"] not in give_ids and c["position"] in CORE),
                                 key=lambda c: c["market"]):
-                q = _proposal(mine, theirs, give + [extra], get, self.profile, self.league, self.weights, self.cache, owner)
+                q = self._flag(_proposal(mine, theirs, give + [extra], get, self.profile, self.league, self.weights, self.cache, owner), give + [extra], get)
                 if q["my_net"] >= 0 and q["acceptance"] >= 0.5:
                     counters.append({"type": "sweeten", "player": extra["name"], **q})
                     if len(counters) >= 4:

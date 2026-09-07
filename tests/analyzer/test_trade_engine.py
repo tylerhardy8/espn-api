@@ -102,6 +102,17 @@ class EngineTests(unittest.TestCase):
         self.assertIn(r["verdict"], ("ACCEPT", "FAIR", "COUNTER"))
         self.assertIn("offer", r)
 
+    def test_keeper_flags(self):
+        from types import SimpleNamespace as NS
+        self.league.draft = [NS(playerId=4, bid_amount=5), NS(playerId=2, bid_amount=90)]
+        eng = TradeEngine(self.league, pool=self.pool)
+        self.assertTrue(eng.keeper_rule)
+        r = eng.evaluate(self.me, self.them, ["WR A"], ["WR C", "WR D"])
+        self.assertTrue(r["offer"]["keeper_forfeit"])
+        self.assertIn("forfeits your 2027 tag", r["offer"]["reason"])
+        r2 = eng.evaluate(self.me, self.them, ["RB A"], ["WR C", "WR D"])
+        self.assertFalse(r2["offer"]["keeper_forfeit"])
+
     def test_playoff_weeks_weighted(self):
         weights = self.engine.weights
         self.assertEqual(weights[16], 1.5)
