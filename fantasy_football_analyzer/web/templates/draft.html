@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block title %}Draft Analysis - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-list-ol text-primary"></i> Draft Analysis</h2>
+    <form class="d-flex gap-2" method="GET">
+        <select name="team" class="form-select" style="width: 220px;" onchange="this.form.submit()">
+            <option value="">All Teams</option>
+            {% for t in teams %}
+            <option value="{{ t }}" {% if team_name and t.lower() == team_name.lower() %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+{% if team_name %}
+<p class="text-muted mb-4">Personalized for: <strong>{{ team_name }}</strong></p>
+{% endif %}
+
+{# Positional Scarcity #}
+{% if scarcity %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> Positional Scarcity</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            {% set max_drop = scarcity.values()|map(attribute='tier_1_dropoff')|max %}
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Position</th>
+                        <th class="text-end">Top 5 Avg</th>
+                        <th class="text-end">Next 5 Avg</th>
+                        <th>Tier 1 Drop</th>
+                        <th class="text-end">Tier 2 Drop</th>
+                        <th class="text-center">Available</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pos in ["QB", "RB", "WR", "TE", "K", "D/ST"] %}
+                    {% if pos in scarcity %}
+                    {% set s = scarcity[pos] %}
+                    <tr>
+                        <td><span class="pos-badge">{{ pos }}</span></td>
+                        <td class="text-end">{{ "%.2f"|format(s.top_5_avg) }}</td>
+                        <td class="text-end">{{ "%.2f"|format(s.next_5_avg) }}</td>
+                        <td>
+                            <div class="bar-cell">
+                                <div class="bar-track"><div class="bar-fill {% if s.tier_1_dropoff > 20 %}bar-gold{% endif %}" style="width: {{ (s.tier_1_dropoff / max_drop * 100)|round if max_drop else 0 }}%"></div></div>
+                                <span class="bar-value {% if s.tier_1_dropoff > 20 %}text-warning fw-bold{% endif %}">{{ "%.1f"|format(s.tier_1_dropoff) }}</span>
+                            </div>
+                        </td>
+                        <td class="text-end">{{ "%.2f"|format(s.tier_2_dropoff) }}</td>
+                        <td class="text-center">{{ s.total_available }}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Top Recommendations #}
+{% if recommendations %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-hand-thumbs-up"></i> Top Draft Picks</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-center" data-sort="num">#</th>
+                        <th data-sort="text">Player</th>
+                        <th data-sort="text">Pos</th>
+                        <th data-sort="text">Team</th>
+                        <th class="text-end" data-sort="num">VBD</th>
+                        <th class="text-end" data-sort="num">Score</th>
+                        <th class="text-center">Need</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rec in recommendations %}
+                    <tr {% if rec.position_need > 0 %}class="table-warning"{% endif %}>
+                        <td class="text-center">{{ loop.index }}</td>
+                        <td class="fw-bold">{{ rec.name }}</td>
+                        <td><span class="pos-badge">{{ rec.position }}</span></td>
+                        <td>{{ rec.team }}</td>
+                        <td class="text-end">{{ "%.2f"|format(rec.vbd) }}</td>
+                        <td class="text-end">{{ "%.2f"|format(rec.recommendation_score) }}</td>
+                        <td class="text-center">
+                            {% if rec.position_need > 0 %}
+                            <i class="bi bi-star-fill text-warning" title="Position of need"></i>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Draft Review #}
+{% if draft_picks %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-clipboard-check"></i> Draft Review</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-center" data-sort="num">Pick</th>
+                        <th data-sort="text">Player</th>
+                        <th data-sort="text">Team</th>
+                        <th class="text-end" data-sort="num">Points</th>
+                        <th class="text-center" data-sort="num">Pts Rank</th>
+                        <th class="text-center" data-sort="num">Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in draft_picks %}
+                    <tr>
+                        <td class="text-center">{{ entry.overall }}</td>
+                        <td class="fw-bold">{{ entry.player }}</td>
+                        <td>{{ entry.team }}</td>
+                        <td class="text-end">{{ "%.2f"|format(entry.total_points) }}</td>
+                        <td class="text-center">{{ entry.points_rank }}</td>
+                        <td class="text-center">
+                            {% if entry.value > 0 %}
+                            <span class="text-success">+{{ entry.value }}</span>
+                            {% elif entry.value < 0 %}
+                            <span class="text-danger">{{ entry.value }}</span>
+                            {% else %}
+                            <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{# Steals and Busts #}
+<div class="row g-3 mb-4">
+    {% if steals %}
+    <div class="col-md-6">
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <h6 class="mb-0"><i class="bi bi-gem"></i> Biggest Steals</h6>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for s in steals %}
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Pick #{{ s.overall }}</strong> &mdash; {{ s.player }}
+                        <br><small class="text-muted">{{ "%.2f"|format(s.total_points) }} pts</small>
+                    </div>
+                    <span class="badge bg-success rounded-pill">+{{ s.value }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if busts %}
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h6 class="mb-0"><i class="bi bi-arrow-down-circle"></i> Biggest Reaches</h6>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for b in busts %}
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Pick #{{ b.overall }}</strong> &mdash; {{ b.player }}
+                        <br><small class="text-muted">{{ "%.2f"|format(b.total_points) }} pts</small>
+                    </div>
+                    <span class="badge bg-danger rounded-pill">{{ b.value }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

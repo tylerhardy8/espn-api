@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "FFA Draft Tracker",
+  "version": "2.0",
+  "description": "Live pick tracking plus a Claude-powered draft advisor side panel for ESPN draft rooms",
+  "host_permissions": [
+    "http://localhost:5050/*",
+    "http://127.0.0.1:5050/*"
+  ],
+  "permissions": ["storage", "sidePanel"],
+  "action": {
+    "default_title": "FFA Draft Advisor — click to open the side panel"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://fantasy.espn.com/*", "https://lm.fantasy.espn.com/*"],
+      "js": ["ws-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://fantasy.espn.com/*", "https://lm.fantasy.espn.com/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

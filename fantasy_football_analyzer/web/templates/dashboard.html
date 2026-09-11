@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-speedometer2 text-warning"></i> Dashboard</h2>
+
+{% if not connected %}
+<div class="card border-warning mb-4">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-exclamation-triangle display-3 text-warning"></i>
+        <h4 class="mt-3">No League Connected</h4>
+        <p class="text-muted">Set up your ESPN league credentials to get started.</p>
+        <a href="{{ url_for('main.setup') }}" class="btn btn-warning btn-lg">
+            <i class="bi bi-gear"></i> Configure League
+        </a>
+    </div>
+</div>
+{% else %}
+
+{# League Info Header #}
+<div class="card bg-dark border-success mb-4">
+    <div class="card-body">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h4 class="mb-1">
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                    {{ league_info.name }}
+                </h4>
+                <p class="text-muted mb-0">
+                    {{ league_info.year }} Season &middot;
+                    {{ league_info.teams }} Teams &middot;
+                    Week {{ league_info.current_week }}
+                </p>
+            </div>
+            <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                {% if ai_available %}
+                <span class="badge bg-info"><i class="bi bi-robot"></i> AI Enabled</span>
+                {% else %}
+                <a href="{{ url_for('main.setup') }}#ai-setup" class="badge bg-secondary text-decoration-none">
+                    <i class="bi bi-robot"></i> AI Not Configured &mdash; Set Up
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Your Team stat cards #}
+{% if league_info.my_team %}
+{% set mt = league_info.my_team %}
+<div class="d-flex align-items-center gap-2 mb-2">
+    {% if mt.logo %}<img src="{{ mt.logo }}" class="team-logo" alt="" onerror="this.style.display='none'">{% endif %}
+    <h5 class="mb-0">{{ mt.name }}</h5>
+    <span class="text-muted small">your team</span>
+</div>
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value">{{ mt.record }}</div>
+            <div class="stat-label">Record</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value">
+                {% if mt.rank %}#{{ mt.rank }}{% else %}&mdash;{% endif %}
+            </div>
+            <div class="stat-label">League Rank</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value {% if mt.streak.startswith('W') %}text-success{% elif mt.streak.startswith('L') %}text-danger{% endif %}">
+                {{ mt.streak or "&mdash;"|safe }}
+            </div>
+            <div class="stat-label">Streak</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value">{{ mt.playoff_pct }}%</div>
+            <div class="stat-label">Playoff Odds</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# This Week's Matchups #}
+{% if league_info.scoreboard %}
+<div class="d-flex align-items-center justify-content-between mb-2">
+    <h5 class="mb-0"><i class="bi bi-controller text-info"></i> Week {{ league_info.current_week }} Matchups</h5>
+</div>
+<div class="row g-3 mb-4">
+    {% for m in league_info.scoreboard %}
+    <div class="col-md-6 col-lg-4">
+        <div class="matchup-card">
+            {% if m.is_playoff %}
+            <div class="text-warning small fw-bold mb-1"><i class="bi bi-trophy"></i> Playoff</div>
+            {% endif %}
+            <div class="matchup-row">
+                <div class="matchup-team">
+                    {% if m.away_logo %}<img src="{{ m.away_logo }}" class="team-logo" alt="" onerror="this.style.display='none'">{% endif %}
+                    <div>
+                        <div class="name">{{ m.away }}</div>
+                        <div class="record">{{ m.away_record }}</div>
+                    </div>
+                </div>
+                <div class="score {% if m.away_score > m.home_score %}text-success{% endif %}">{{ m.away_score }}</div>
+            </div>
+            <div class="matchup-row">
+                <div class="matchup-team">
+                    {% if m.home_logo %}<img src="{{ m.home_logo }}" class="team-logo" alt="" onerror="this.style.display='none'">{% endif %}
+                    <div>
+                        <div class="name">{{ m.home }}</div>
+                        <div class="record">{{ m.home_record }}</div>
+                    </div>
+                </div>
+                <div class="score {% if m.home_score > m.away_score %}text-success{% endif %}">{{ m.home_score }}</div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="row g-4 mb-4">
+    {# Standings #}
+    <div class="{% if league_info.power_rankings or league_info.activity %}col-lg-7{% else %}col-12{% endif %}">
+        {% if league_info.standings %}
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-bar-chart"></i> Current Standings</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover table-sortable mb-0">
+                        <thead>
+                            <tr>
+                                <th data-sort="num">#</th>
+                                <th data-sort="text">Team</th>
+                                <th class="text-center" data-sort="num">W-L</th>
+                                <th class="text-center" data-sort="num">Streak</th>
+                                <th class="text-center" data-sort="num">Playoff %</th>
+                                <th data-sort="num">Points For</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for team in league_info.standings %}
+                            <tr {% if config.get('team_name') and team.name.lower() == config.team_name.lower() %}class="table-active"{% endif %}>
+                                <td>
+                                    {% if team.rank <= 3 %}
+                                    <span class="rank-medal rank-{{ team.rank }}">{{ team.rank }}</span>
+                                    {% else %}{{ team.rank }}{% endif %}
+                                </td>
+                                <td>
+                                    {% if team.logo %}<img src="{{ team.logo }}" class="team-logo me-1" alt="" onerror="this.style.display='none'">{% endif %}
+                                    {{ team.name }}
+                                    {% if config.get('team_name') and team.name.lower() == config.team_name.lower() %}
+                                    <i class="bi bi-star-fill text-warning ms-1" title="Your team"></i>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">{{ team.wins }}-{{ team.losses }}{% if team.ties %}-{{ team.ties }}{% endif %}</td>
+                                <td class="text-center">
+                                    {% if team.streak %}
+                                    <span class="badge {% if team.streak.startswith('W') %}bg-success{% else %}bg-danger{% endif %} bg-opacity-75">{{ team.streak }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">{{ team.playoff_pct }}%</td>
+                                <td>
+                                    <div class="bar-cell">
+                                        <div class="bar-track"><div class="bar-fill" style="width: {{ team.pf_pct }}%"></div></div>
+                                        <span class="bar-value">{{ team.points_for }}</span>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Power rankings + activity sidebar #}
+    {% if league_info.power_rankings or league_info.activity %}
+    <div class="col-lg-5">
+        {% if league_info.power_rankings %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-lightning-charge"></i> Power Rankings</h5>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <tbody>
+                        {% for pr in league_info.power_rankings %}
+                        <tr>
+                            <td style="width: 2.5rem">{{ pr.rank }}</td>
+                            <td>
+                                {% if pr.logo %}<img src="{{ pr.logo }}" class="team-logo me-1" alt="" onerror="this.style.display='none'">{% endif %}
+                                {{ pr.name }}
+                            </td>
+                            <td class="text-end text-muted">{{ pr.score }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if league_info.activity %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-activity"></i> Recent Activity</h5>
+            </div>
+            <div class="card-body p-0 activity-feed">
+                {% for item in league_info.activity %}
+                <div class="activity-item">
+                    <span class="activity-date">{{ item.date }}</span>
+                    <div>
+                        {% for a in item.actions %}
+                        <div>
+                            <strong>{{ a.team }}</strong>
+                            <span class="text-muted">{{ a.verb|lower }}</span>
+                            {{ a.player }}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{# Quick Actions #}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <a href="{{ url_for('main.history') }}" class="card text-decoration-none h-100 card-hover">
+            <div class="card-body text-center py-3">
+                <i class="bi bi-clock-history fs-3 text-info"></i>
+                <h6 class="mt-1 mb-0">History</h6>
+                <small class="text-muted">Trends &amp; records</small>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="{{ url_for('main.draft') }}" class="card text-decoration-none h-100 card-hover">
+            <div class="card-body text-center py-3">
+                <i class="bi bi-list-ol fs-3 text-primary"></i>
+                <h6 class="mt-1 mb-0">Draft</h6>
+                <small class="text-muted">VBD rankings</small>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="{{ url_for('main.trades') }}" class="card text-decoration-none h-100 card-hover">
+            <div class="card-body text-center py-3">
+                <i class="bi bi-arrow-left-right fs-3 text-success"></i>
+                <h6 class="mt-1 mb-0">Trades</h6>
+                <small class="text-muted">Targets &amp; evaluation</small>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="{{ url_for('main.waivers') }}" class="card text-decoration-none h-100 card-hover">
+            <div class="card-body text-center py-3">
+                <i class="bi bi-person-plus fs-3 text-warning"></i>
+                <h6 class="mt-1 mb-0">Waivers</h6>
+                <small class="text-muted">Free agents</small>
+            </div>
+        </a>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}

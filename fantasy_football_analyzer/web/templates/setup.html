@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+
+{% block title %}Setup - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h2 class="mb-4"><i class="bi bi-gear-fill text-warning"></i> League Setup</h2>
+
+        {# League profiles #}
+        <div class="card mb-4" id="leagues">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-collection"></i> League Profiles</h5>
+                {% if config.leagues %}
+                <span class="badge bg-warning text-dark">Active: {{ config.active }}</span>
+                {% endif %}
+            </div>
+            <div class="card-body p-0">
+                {% if config.leagues %}
+                <table class="table table-hover mb-0 align-middle">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>League ID</th>
+                            <th>Season</th>
+                            <th>Your Team</th>
+                            <th class="text-end"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for lp in config.leagues %}
+                        <tr {% if lp.name == config.active %}class="table-active"{% endif %}>
+                            <td class="fw-bold">
+                                {{ lp.name }}
+                                {% if lp.name == config.active %}<i class="bi bi-star-fill text-warning ms-1" title="Active"></i>{% endif %}
+                            </td>
+                            <td><code>{{ lp.league_id }}</code></td>
+                            <td>{{ lp.year }}</td>
+                            <td>{{ lp.team_name or '—' }}</td>
+                            <td class="text-end text-nowrap">
+                                {% if lp.name != config.active %}
+                                <form method="POST" action="{{ url_for('main.setup') }}" class="d-inline">
+                                    <input type="hidden" name="action" value="activate">
+                                    <input type="hidden" name="name" value="{{ lp.name }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-warning">Activate</button>
+                                </form>
+                                {% endif %}
+                                <form method="POST" action="{{ url_for('main.setup') }}" class="d-inline"
+                                      onsubmit="return confirm('Remove league profile {{ lp.name|e }}?');">
+                                    <input type="hidden" name="action" value="remove">
+                                    <input type="hidden" name="name" value="{{ lp.name }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted text-center py-3 mb-0">No leagues yet — fill in the form below to add your first one.</p>
+                {% endif %}
+            </div>
+            {% if config.leagues %}
+            <div class="card-footer">
+                <form method="POST" action="{{ url_for('main.setup') }}" class="row g-2 align-items-end">
+                    <input type="hidden" name="action" value="add">
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1">Profile name</label>
+                        <input type="text" class="form-control form-control-sm" name="name" placeholder="e.g. Work League" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1">ESPN League ID</label>
+                        <input type="number" class="form-control form-control-sm" name="league_id" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small mb-1">Season</label>
+                        <input type="number" class="form-control form-control-sm" name="year" value="{{ config.get('year', 2025) }}" min="2010" max="2030">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small mb-1">Your team name</label>
+                        <input type="text" class="form-control form-control-sm" name="team_name" placeholder="optional">
+                    </div>
+                    <div class="col-md-1 d-grid">
+                        <button type="submit" class="btn btn-sm btn-warning" title="Add league">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    </div>
+                </form>
+                <div class="form-text mt-2">
+                    New leagues use the same ESPN cookies below — they're tied to your ESPN account, not the league.
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-pencil-square"></i>
+                    {% if config.leagues %}Edit Active League: {{ config.active }}{% else %}Add Your First League{% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('main.setup') }}">
+                    {% if not config.leagues %}
+                    <div class="mb-3">
+                        <label for="profile_name" class="form-label fw-bold">Profile Name</label>
+                        <input type="text" class="form-control" id="profile_name" name="profile_name"
+                               placeholder="e.g. Main League">
+                        <div class="form-text">A label for this league — you can add more leagues later.</div>
+                    </div>
+                    {% endif %}
+                    <div class="mb-3">
+                        <label for="league_id" class="form-label fw-bold">ESPN League ID <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control" id="league_id" name="league_id"
+                               value="{{ config.get('league_id', '') }}" required
+                               placeholder="e.g. 12345678">
+                        <div class="form-text">
+                            Find this in your ESPN Fantasy league URL:
+                            <code>fantasy.espn.com/football/league?leagueId=<strong>12345678</strong></code>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="year" class="form-label fw-bold">Season Year</label>
+                        <input type="number" class="form-control" id="year" name="year"
+                               value="{{ config.get('year', 2025) }}"
+                               min="2010" max="2030" placeholder="2025">
+                    </div>
+
+                    <hr class="my-4">
+                    <h5 class="text-muted mb-3">
+                        <i class="bi bi-lock"></i> Private League Credentials
+                        <small class="text-muted">(optional for public leagues)</small>
+                    </h5>
+
+                    <div class="accordion mb-3" id="cookieHelp">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button"
+                                        data-bs-toggle="collapse" data-bs-target="#cookieSteps">
+                                    <i class="bi bi-question-circle me-2"></i> How do I find my ESPN cookies? (step by step)
+                                </button>
+                            </h2>
+                            <div id="cookieSteps" class="accordion-collapse collapse" data-bs-parent="#cookieHelp">
+                                <div class="accordion-body">
+                                    <p class="mb-2">You only do this once. On a <strong>computer</strong> (not your phone):</p>
+                                    <ol class="mb-3">
+                                        <li>Go to <a href="https://fantasy.espn.com" target="_blank" rel="noopener">fantasy.espn.com</a> and log in.</li>
+                                        <li>Open your browser's developer tools:
+                                            <ul>
+                                                <li><strong>Chrome / Edge:</strong> press <kbd>F12</kbd> (or <kbd>Cmd+Option+I</kbd> on Mac)</li>
+                                                <li><strong>Safari:</strong> first enable Settings &rarr; Advanced &rarr; "Show features for web developers", then press <kbd>Cmd+Option+I</kbd></li>
+                                            </ul>
+                                        </li>
+                                        <li>Click the <strong>Application</strong> tab (Chrome/Edge) or <strong>Storage</strong> tab (Safari/Firefox).</li>
+                                        <li>In the left sidebar, expand <strong>Cookies</strong> and click <code>https://fantasy.espn.com</code>.</li>
+                                        <li>Find the row named <code>espn_s2</code> — double-click its <em>Value</em>, copy it, and paste it below. It's very long; that's normal.</li>
+                                        <li>Find the row named <code>SWID</code> — copy its value <em>including the curly braces</em> and paste it below.</li>
+                                    </ol>
+                                    <p class="text-muted mb-0"><small>
+                                        <i class="bi bi-shield-check"></i> These cookies let the app read your league the way
+                                        your own browser does. They're stored only in this instance and expire periodically —
+                                        if the app stops connecting months from now, repeat these steps.
+                                    </small></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="espn_s2" class="form-label fw-bold">espn_s2 Cookie</label>
+                        <textarea class="form-control font-monospace" id="espn_s2" name="espn_s2"
+                                  rows="3" placeholder="Paste your espn_s2 cookie value here...">{{ config.get('espn_s2', '') }}</textarea>
+                        <div class="form-text">
+                            Open ESPN Fantasy in your browser &rarr; Developer Tools &rarr; Application &rarr; Cookies &rarr;
+                            find <code>espn_s2</code> and copy its value.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="swid" class="form-label fw-bold">SWID Cookie</label>
+                        <input type="text" class="form-control font-monospace" id="swid" name="swid"
+                               value="{{ config.get('swid', '') }}"
+                               placeholder="{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}">
+                        <div class="form-text">
+                            Found in the same Cookies panel as <code>espn_s2</code>. Looks like a GUID in curly braces.
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <div class="mb-4">
+                        <label for="team_name" class="form-label fw-bold">Your Team Name</label>
+                        <input type="text" class="form-control" id="team_name" name="team_name"
+                               value="{{ config.get('team_name', '') }}"
+                               placeholder="e.g. My Fantasy Team">
+                        <div class="form-text">
+                            Used to personalize recommendations. Must match your ESPN team name exactly.
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-warning btn-lg w-100">
+                        <i class="bi bi-check-circle"></i> Save &amp; Test Connection
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        {# Data Sources #}
+        {% set src = sources|default({}) %}
+        <div class="card mt-4" id="data-sources">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-database"></i> Draft Data Sources</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm mb-3">
+                    <tbody>
+                        <tr>
+                            <td class="fw-bold">ESPN</td>
+                            <td>Projections (your league's scoring), crowd auction values, ADP, draft feed</td>
+                            <td class="text-end"><span class="badge bg-success">Always on</span></td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">Sleeper</td>
+                            <td>Injury status, practice reports, depth charts, trending adds (free, no key)</td>
+                            <td class="text-end">
+                                {% if src.get('sleeper') %}<span class="badge bg-success">Loaded</span>
+                                {% else %}<span class="badge bg-secondary">Auto — loads with the draft board</span>{% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">FantasyPros</td>
+                            <td>Expert Consensus Rankings &amp; tiers, blended into dollar values</td>
+                            <td class="text-end">
+                                {% if src.get('fantasypros') %}<span class="badge bg-success">Loaded ({{ src.get('fp_matched', 0) }} matched)</span>
+                                {% elif src.get('fantasypros_key_set') %}<span class="badge bg-info">Key set — loads with the draft board</span>
+                                {% else %}<span class="badge bg-secondary">Not configured</span>{% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">Player news</td>
+                            <td>Rotowire, FantasyPros, NBC Sports RSS — matched to available players</td>
+                            <td class="text-end"><span class="badge bg-success">Always on</span></td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">Live web search</td>
+                            <td>Claude checks same-day news on its targets (toggle on the Live Draft page)</td>
+                            <td class="text-end">
+                                {% if ai_available %}<span class="badge bg-success">Available</span>
+                                {% else %}<span class="badge bg-secondary">Needs AI key</span>{% endif %}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                {% if not src.get('fantasypros_key_set') %}
+                <p class="text-muted mb-0">
+                    <small><i class="bi bi-info-circle"></i> To enable FantasyPros, get a free API key at
+                    <a href="https://www.fantasypros.com/apis/" target="_blank" rel="noopener">fantasypros.com/apis</a>
+                    and set <code>FANTASYPROS_API_KEY</code> (add it to <code>.env</code> for Docker).</small>
+                </p>
+                {% endif %}
+            </div>
+        </div>
+
+        {# AI Configuration #}
+        <div class="card mt-4" id="ai-setup">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-robot"></i> AI Analysis (Optional)</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="me-2">Status:</span>
+                    {% if config.get('anthropic_api_key') %}
+                    <span class="badge bg-success"><i class="bi bi-check-circle"></i>
+                        Your key is saved (...{{ config.get('anthropic_api_key', '')[-4:] }})</span>
+                    {% elif ai_available %}
+                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Key set by the server</span>
+                    {% else %}
+                    <span class="badge bg-secondary"><i class="bi bi-x-circle"></i> Not configured</span>
+                    {% endif %}
+                </div>
+
+                <p>
+                    AI analysis uses Claude for live draft recommendations, trade evaluations,
+                    and waiver strategy. It runs on <em>your own</em> Anthropic API key, so you
+                    control the spend (a full draft night typically costs a dollar or two).
+                </p>
+
+                <form method="POST" action="{{ url_for('main.setup') }}" class="row g-2 align-items-end mb-3">
+                    <input type="hidden" name="action" value="save_ai_key">
+                    <div class="col-md-9">
+                        <label for="ai_key" class="form-label fw-bold">Anthropic API Key</label>
+                        <input type="password" class="form-control font-monospace" id="ai_key" name="ai_key"
+                               placeholder="sk-ant-..." autocomplete="off">
+                        <div class="form-text">
+                            Create one at <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>
+                            (sign up &rarr; API keys &rarr; Create key). Saving an empty field removes your stored key.
+                        </div>
+                    </div>
+                    <div class="col-md-3 d-grid">
+                        <button type="submit" class="btn btn-info">Save Key</button>
+                    </div>
+                </form>
+
+                <p class="text-muted mb-0">
+                    <small><i class="bi bi-info-circle"></i> AI features appear on the Trades, Waivers, and
+                    Live Draft pages once a key is set. The key is stored only in this instance's config.</small>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

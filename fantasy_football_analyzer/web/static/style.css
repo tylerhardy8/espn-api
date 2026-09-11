@@ -1,0 +1,290 @@
+/* Fantasy Football Analyzer - Custom Styles */
+
+/* ------------------------------------------------------------------ */
+/* Theme layer over Bootstrap dark                                     */
+/* ------------------------------------------------------------------ */
+
+:root {
+    --ffa-accent: #ffc107;          /* gold: titles, highlights, your team */
+    --ffa-field: #2e9e5b;           /* field green: positive accents */
+    --ffa-surface: #23282e;         /* card surface, slightly above body */
+    --ffa-surface-2: #2a3138;       /* header strips, hover */
+    --ffa-border: rgba(255, 255, 255, 0.08);
+    --ffa-bar-track: rgba(255, 255, 255, 0.07);
+    --ffa-chart-blue: #3987e5;
+    --ffa-chart-gold: #c98500;   /* validated for the dark surface; UI gold stays #ffc107 */
+    --ffa-chart-muted: #5c6670;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background:
+        radial-gradient(1200px 400px at 50% -200px, rgba(46, 158, 91, 0.08), transparent),
+        var(--bs-body-bg);
+}
+
+.container.mt-4 {
+    flex: 1;
+}
+
+.card {
+    background-color: var(--ffa-surface);
+    border: 1px solid var(--ffa-border);
+    border-radius: 0.75rem;
+    overflow: hidden;
+}
+
+.card-header {
+    background-color: var(--ffa-surface-2);
+    border-bottom: 1px solid var(--ffa-border);
+    font-weight: 600;
+}
+
+.card-header h5 {
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+}
+
+.navbar-brand {
+    font-size: 1.1rem;
+}
+
+.badge {
+    font-weight: 500;
+}
+
+/* ------------------------------------------------------------------ */
+/* Stat cards (hero numbers)                                           */
+/* ------------------------------------------------------------------ */
+
+.stat-card {
+    background-color: var(--ffa-surface);
+    border: 1px solid var(--ffa-border);
+    border-radius: 0.75rem;
+    padding: 1rem 1.25rem;
+    height: 100%;
+}
+
+.stat-card .stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.stat-card .stat-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--bs-secondary-color);
+}
+
+/* ------------------------------------------------------------------ */
+/* Tables                                                              */
+/* ------------------------------------------------------------------ */
+
+.table {
+    --bs-table-bg: transparent;
+    font-variant-numeric: tabular-nums;
+}
+
+.table-active {
+    --bs-table-active-bg: rgba(255, 193, 7, 0.12);
+}
+
+.table tbody tr {
+    transition: background-color 0.3s ease;
+}
+
+/* Proportional bar inside a table cell */
+.bar-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 110px;
+}
+
+.bar-cell .bar-track {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background-color: var(--ffa-bar-track);
+    overflow: hidden;
+}
+
+.bar-cell .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    background-color: var(--ffa-chart-blue);
+}
+
+.bar-cell .bar-fill.bar-gold { background-color: var(--ffa-accent); }
+.bar-cell .bar-fill.bar-green { background-color: var(--ffa-field); }
+
+.bar-cell .bar-value {
+    min-width: 3.5em;
+    text-align: right;
+}
+
+/* Sortable table headers */
+.table-sortable th[data-sort] {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.table-sortable th[data-sort]::after {
+    content: "\2195";           /* up-down arrow */
+    opacity: 0.3;
+    margin-left: 0.3em;
+    font-size: 0.8em;
+}
+
+.table-sortable th[data-sort][aria-sort="ascending"]::after { content: "\2191"; opacity: 1; }
+.table-sortable th[data-sort][aria-sort="descending"]::after { content: "\2193"; opacity: 1; }
+
+/* ------------------------------------------------------------------ */
+/* Team identity                                                       */
+/* ------------------------------------------------------------------ */
+
+.team-logo {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    background-color: var(--ffa-surface-2);
+    vertical-align: text-bottom;
+}
+
+.team-logo-lg {
+    width: 48px;
+    height: 48px;
+}
+
+/* Medal badges for ranks 1-3 */
+.rank-medal {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6em;
+    height: 1.6em;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.85em;
+}
+
+.rank-medal.rank-1 { background: #ffc107; color: #1a1a1a; }
+.rank-medal.rank-2 { background: #adb5bd; color: #1a1a1a; }
+.rank-medal.rank-3 { background: #b87333; color: #fff; }
+
+/* ------------------------------------------------------------------ */
+/* Scoreboard matchup cards                                            */
+/* ------------------------------------------------------------------ */
+
+.matchup-card {
+    background-color: var(--ffa-surface);
+    border: 1px solid var(--ffa-border);
+    border-radius: 0.75rem;
+    padding: 0.75rem 1rem;
+    height: 100%;
+}
+
+.matchup-card .matchup-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+}
+
+.matchup-card .matchup-team {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.matchup-card .matchup-team .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.matchup-card .matchup-team .record {
+    color: var(--bs-secondary-color);
+    font-size: 0.75rem;
+}
+
+.matchup-card .score {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ */
+/* Charts                                                              */
+/* ------------------------------------------------------------------ */
+
+.chart-box {
+    position: relative;
+    height: 320px;
+    padding: 1rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Activity feed                                                       */
+/* ------------------------------------------------------------------ */
+
+.activity-feed .activity-item {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--ffa-border);
+    font-size: 0.85rem;
+}
+
+.activity-feed .activity-item:last-child { border-bottom: 0; }
+
+.activity-feed .activity-date {
+    color: var(--bs-secondary-color);
+    white-space: nowrap;
+    min-width: 3.5em;
+}
+
+/* ------------------------------------------------------------------ */
+/* Misc                                                                */
+/* ------------------------------------------------------------------ */
+
+.card-hover {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-hover:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.3);
+}
+
+.font-monospace {
+    font-size: 0.85em;
+}
+
+.accordion-button:focus {
+    box-shadow: none;
+    border-color: rgba(255, 193, 7, 0.25);
+}
+
+/* Position badges */
+.pos-badge {
+    display: inline-block;
+    min-width: 2.6em;
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.2em 0.4em;
+    border-radius: 0.3rem;
+    background-color: var(--ffa-surface-2);
+    border: 1px solid var(--ffa-border);
+    color: var(--bs-body-color);
+}
