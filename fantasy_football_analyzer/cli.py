@@ -110,12 +110,12 @@ def cmd_history(args):
     """Run historical analysis across multiple seasons."""
     config, league_cfg = _get_league_or_exit(args)
 
-    years = parse_year_range(args.years) if args.years else [config.get("year", DEFAULT_YEAR)]
-    print(f"Loading {len(years)} season(s): {years}")
+    years = parse_year_range(args.years) if args.years else None
+    print(f"Loading requested seasons: {years}" if years else "Discovering all ESPN league seasons...")
 
     leagues = connect_multi_year(
         league_cfg["league_id"], years,
-        league_cfg["espn_s2"], league_cfg["swid"]
+        league_cfg["espn_s2"], league_cfg["swid"], current_year=config.get("year", DEFAULT_YEAR)
     )
 
     if not leagues:
@@ -254,13 +254,13 @@ def cmd_full(args):
 
     year = int(args.year) if args.year else config.get("year", DEFAULT_YEAR)
     team_name = args.team or config.get("team_name")
-    years = parse_year_range(args.years) if args.years else [year]
+    years = parse_year_range(args.years) if args.years else None
 
     # Historical
-    if len(years) > 1:
-        print(f"Loading {len(years)} seasons for historical analysis...")
+    if years is None or len(years) > 1:
+        print("Discovering all historical seasons..." if years is None else f"Loading {len(years)} historical seasons...")
         leagues = connect_multi_year(league_cfg["league_id"], years,
-                                     league_cfg["espn_s2"], league_cfg["swid"])
+                                     league_cfg["espn_s2"], league_cfg["swid"], current_year=year)
         if leagues:
             print(format_historical_report(leagues))
             print()

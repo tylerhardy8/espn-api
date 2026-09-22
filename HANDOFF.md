@@ -4,6 +4,15 @@ Written 2026-09-11 for whoever picks this up next (human or agent). Read this
 first, then `AUCTION_ASSISTANT_NOTES.md` (model details) and
 `chrome-extension/README.md` (draft-day runbook).
 
+## 2026-09-21 audit update
+
+See `docs/WAIVER_FAAB.md` and `docs/HISTORY_AUDIT.md` for the current behavior.
+Waivers use stable team IDs, verified FAAB, all-position roster depth and capped
+claim plans. History discovers every ESPN-advertised season, joins by stable
+identities, and exposes incomplete coverage. The older four-season/FA5 notes
+below describe the pre-audit implementation. Live Papa season coverage still
+requires an authenticated ESPN check; no Railway deployment was performed.
+
 ## What this is
 
 A fork of `cwendt94/espn-api` plus an application package,

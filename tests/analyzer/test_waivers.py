@@ -115,3 +115,19 @@ def test_box_player_full_schedule_enrichment_prevents_false_bye_coverage():
     rec=next(r for r in get_waiver_recommendations(league,team_id=14) if r['player_id']==500)
     assert rec['bye_week']==13
     assert 13 not in rec['components']['bye_week_gains']
+
+
+@pytest.mark.parametrize('position',['QB','RB','WR','TE','K','LB','DL','DB','P','HC'])
+def test_depth_and_insurance_evaluated_at_every_required_position(position):
+    league=papa();profile=profile_for(league)
+    required=profile['fixed'][position]
+    league.teams[0].roster=[p for p in league.teams[0].roster if p.position != position] + [player(800+i,f'Starter {position} {i}',position,25,position,13) for i in range(required)]
+    candidate=player_card(player(999,'Reserve',position,10,bye=7),league,profile=profile)
+    roster=roster_cards(league.teams[0],league,profile=profile)
+    components=value_components(roster,candidate,profile)
+    assert components['no_reserves'] and components['fragility_premium']>0
+    assert components['bye_week_gains'][13]>0
+    if position in ('QB','RB','WR','TE'):
+        assert components['depth_premium']>0
+    deeper=roster+[dict(candidate,player_id=998)]
+    assert not value_components(deeper,candidate,profile)['no_reserves']

@@ -10,34 +10,19 @@ Analyzes multi-year league data to surface patterns like:
 
 import statistics
 from collections import defaultdict
+from .history_data import identity_labels, season_complete, final_rank, completed_games, coverage_for, activity_count
 
 
 def get_manager_key(team):
-    """Get a stable manager identity from a team object.
-
-    Uses the first owner's displayName if available, falling back to team name.
-    Returns (display_name, owner_id) tuple for grouping and display.
-    """
-    owners = getattr(team, "owners", [])
-    if owners and isinstance(owners, list) and len(owners) > 0:
-        owner = owners[0]
-        display = owner.get("displayName") or owner.get("firstName", "")
-        if owner.get("lastName"):
-            display = display or ""
-            if owner.get("firstName"):
-                display = f"{owner['firstName']} {owner['lastName']}"
-        owner_id = owner.get("id", "")
-        if display:
-            return display, owner_id
-    return team.team_name, ""
-
-
-def _get_identity(team, group_by):
-    """Return the grouping key for a team based on group_by mode."""
-    if group_by == "manager":
-        name, _ = get_manager_key(team)
-        return name
-    return team.team_name
+    """Display name and stable owner-ID group; neither team names nor display names are IDs."""
+    owners = getattr(team, 'owners', [])
+    owners = owners if isinstance(owners, list) else []
+    names, ids = [], []
+    for owner in sorted((o for o in owners if isinstance(o, dict)), key=lambda o: str(o.get('id', ''))):
+        name = ' '.join(str(owner.get(k) or '') for k in ('firstName','lastName')).strip()
+        names.append(name or owner.get('displayName') or team.team_name)
+        if owner.get('id'): ids.append(str(owner['id']).casefold())
+    return (' / '.join(names) or team.team_name, '|'.join(sorted(ids)))
 
 
 def analyze_team_history(leagues_by_year, group_by="team"):
@@ -45,28 +30,32 @@ def analyze_team_history(leagues_by_year, group_by="team"):
 
     Args:
         leagues_by_year: dict of {year: League}
-        group_by: "team" (default) groups by team name,
-                  "manager" groups by owner/manager identity
+        group_by: "team" (default) groups by franchise ID,
+                  "manager" groups by owner-ID set (latest names are labels)
 
     Returns a dict keyed by team/manager name with yearly stats and trends.
     """
     team_data = defaultdict(lambda: {"seasons": [], "team_names": set()})
+    labels = identity_labels(leagues_by_year, group_by)
 
     for year, league in sorted(leagues_by_year.items()):
         standings = league.standings()
         for rank, team in enumerate(standings, 1):
-            key = _get_identity(team, group_by)
+            key = labels[(year, str(team.team_id))]
             record = {
                 "year": year,
-                "rank": rank,
+                "rank": final_rank(team, league) or rank,
+                "final_rank": final_rank(team, league),
+                "completed": season_complete(league),
+                "team_id": team.team_id,
                 "wins": team.wins,
                 "losses": team.losses,
                 "ties": team.ties,
                 "points_for": round(team.points_for, 2),
                 "points_against": round(team.points_against, 2),
-                "acquisitions": team.acquisitions,
-                "trades": team.trades,
-                "drops": team.drops,
+                "acquisitions": activity_count(team, "acquisitions"),
+                "trades": activity_count(team, "trades"),
+                "drops": activity_count(team, "drops"),
                 "team_name": team.team_name,
             }
             team_data[key]["seasons"].append(record)
@@ -76,11 +65,13 @@ def analyze_team_history(leagues_by_year, group_by="team"):
     for name, data in team_data.items():
         seasons = data["seasons"]
         total_games = sum(s["wins"] + s["losses"] + s["ties"] for s in seasons)
-        total_wins = sum(s["wins"] for s in seasons)
+        total_wins = sum(s["wins"] + .5*s["ties"] for s in seasons)
         data["all_time_win_pct"] = round(total_wins / total_games, 3) if total_games else 0
-        data["avg_finish"] = round(sum(s["rank"] for s in seasons) / len(seasons), 1)
+        final_ranks = [s["final_rank"] for s in seasons if s["final_rank"] is not None]
+        data["avg_finish"] = round(sum(final_ranks) / len(final_ranks), 1) if final_ranks else None
+        data["completed_seasons"] = len(final_ranks)
         data["avg_points_for"] = round(sum(s["points_for"] for s in seasons) / len(seasons), 1)
-        data["championships"] = sum(1 for s in seasons if s["rank"] == 1)
+        data["championships"] = sum(1 for s in seasons if s["final_rank"] == 1)
         data["num_seasons"] = len(seasons)
         # Convert set to sorted list for display
         data["team_names"] = sorted(data["team_names"])
@@ -89,28 +80,16 @@ def analyze_team_history(leagues_by_year, group_by="team"):
 
 
 def analyze_head_to_head(leagues_by_year, group_by="team"):
-    """Build head-to-head records between all team pairs across seasons.
-
-    Returns a nested dict: h2h[team_a][team_b] = {"wins": W, "losses": L, "ties": T}
-    """
-    h2h = defaultdict(lambda: defaultdict(lambda: {"wins": 0, "losses": 0, "ties": 0}))
-
+    """Decided matchups only, using stable identity and excluding playoff byes."""
+    labels = identity_labels(leagues_by_year, group_by)
+    h2h = defaultdict(lambda: defaultdict(lambda: {'wins':0, 'losses':0, 'ties':0}))
     for year, league in leagues_by_year.items():
-        for team in league.teams:
-            team_key = _get_identity(team, group_by)
-            for week_idx, opponent in enumerate(team.schedule):
-                if not hasattr(opponent, "team_name"):
-                    continue
-                opp_key = _get_identity(opponent, group_by)
-                outcome = team.outcomes[week_idx] if week_idx < len(team.outcomes) else None
-                if outcome == "W":
-                    h2h[team_key][opp_key]["wins"] += 1
-                elif outcome == "L":
-                    h2h[team_key][opp_key]["losses"] += 1
-                elif outcome == "T":
-                    h2h[team_key][opp_key]["ties"] += 1
-
-    return {k: dict(v) for k, v in h2h.items()}
+        for game in completed_games(league):
+            a = labels[(year, str(game['team'].team_id))]
+            b = labels[(year, str(game['opponent'].team_id))]
+            if a != b:
+                h2h[a][b][{'W':'wins','L':'losses','T':'ties'}[game['outcome']]] += 1
+    return {k:dict(v) for k,v in h2h.items()}
 
 
 def _build_player_stats_map(league):
@@ -169,7 +148,7 @@ def analyze_draft_history(leagues_by_year):
 
         year_picks = []
         for pick in league.draft:
-            total_points, avg_points, position = player_stats.get(pick.playerId, (0, 0, ""))
+            total_points, avg_points, position = player_stats.get(pick.playerId, (None, None, ""))
             year_picks.append({
                 "year": year,
                 "round": pick.round_num,
@@ -178,54 +157,49 @@ def analyze_draft_history(leagues_by_year):
                 "player": pick.playerName,
                 "position": position,
                 "team": pick.team.team_name if hasattr(pick, "team") and pick.team else "Unknown",
-                "total_points": round(total_points, 2),
-                "avg_points": round(avg_points, 2),
+                "total_points": round(total_points, 2) if total_points is not None else None,
+                "avg_points": round(avg_points, 2) if avg_points is not None else None,
+                "stats_available": total_points is not None,
+                "completed": season_complete(league),
+                "draft_type": getattr(league.settings, "draft_type", ""),
+                "bid_amount": getattr(pick, "bid_amount", None),
             })
 
         # Rank each pick against same-position picks from the same draft
         by_position = defaultdict(list)
         for p in year_picks:
-            by_position[p["position"]].append(p)
+            p["pos_rank"] = None
+            if p["stats_available"]:
+                by_position[p["position"]].append(p)
         for pos_picks in by_position.values():
-            pos_picks.sort(key=lambda x: x["total_points"], reverse=True)
+            pos_picks.sort(key=lambda x: x["total_points"] if x["total_points"] is not None else float("-inf"), reverse=True)
             for rank, p in enumerate(pos_picks, 1):
                 p["pos_rank"] = rank
 
         picks.extend(year_picks)
 
     # Sort by total points descending to identify steals vs busts
-    picks.sort(key=lambda x: x["total_points"], reverse=True)
+    picks.sort(key=lambda x: x["total_points"] if x["total_points"] is not None else float("-inf"), reverse=True)
     return picks
 
 
 def analyze_scoring_trends(leagues_by_year):
-    """Analyze league-wide scoring trends across seasons.
-
-    Returns per-year scoring summaries.
-    """
+    """Decided matchup totals; include legitimate zero/negative scores."""
     trends = []
     for year, league in sorted(leagues_by_year.items()):
-        all_scores = []
-        for team in league.teams:
-            all_scores.extend([s for s in team.scores if s > 0])
-
-        if not all_scores:
-            continue
-
-        trends.append({
-            "year": year,
-            "avg_score": round(sum(all_scores) / len(all_scores), 2),
-            "max_score": round(max(all_scores), 2),
-            "min_score": round(min(all_scores), 2),
-            "total_teams": len(league.teams),
-            "weeks_played": len(league.teams[0].scores) if league.teams else 0,
-        })
-
+        games = completed_games(league)
+        scores = [g['score'] for g in games]
+        if scores:
+            trends.append({'year':year, 'avg_score':round(statistics.mean(scores),2),
+                'max_score':max(scores), 'min_score':min(scores), 'total_teams':len(league.teams),
+                'weeks_played':len({g['period'] for g in games}),
+                'periods_played':len({g['period'] for g in games}), 'units':'matchup-period total'})
     return trends
 
 
 def analyze_manager_tendencies(leagues_by_year, group_by="team"):
     """Analyze managerial behavior patterns (trade frequency, waiver usage, etc.)."""
+    labels = identity_labels(leagues_by_year, group_by)
     managers = defaultdict(lambda: {
         "total_trades": 0,
         "total_acquisitions": 0,
@@ -235,23 +209,26 @@ def analyze_manager_tendencies(leagues_by_year, group_by="team"):
 
     for year, league in leagues_by_year.items():
         for team in league.teams:
-            key = _get_identity(team, group_by)
+            key = labels[(year, str(team.team_id))]
             m = managers[key]
-            m["total_trades"] += team.trades
-            m["total_acquisitions"] += team.acquisitions
-            m["total_drops"] += team.drops
-            m["seasons"] += 1
+            m['seasons'] += 1
+            for counter in ('trades','acquisitions','drops'):
+                value = activity_count(team, counter)
+                reported = counter + '_reported_seasons'
+                m.setdefault(reported, 0)
+                if value is not None:
+                    m['total_' + counter] += value
+                    m[reported] += 1
+    for m in managers.values():
+        for counter in ('trades','acquisitions','drops'):
+            n = m[counter + '_reported_seasons']
+            m['avg_' + counter + '_per_season'] = round(m['total_' + counter]/n, 1) if n else None
 
-    for name, m in managers.items():
-        s = m["seasons"]
-        m["avg_trades_per_season"] = round(m["total_trades"] / s, 1) if s else 0
-        m["avg_acquisitions_per_season"] = round(m["total_acquisitions"] / s, 1) if s else 0
-        m["avg_drops_per_season"] = round(m["total_drops"] / s, 1) if s else 0
 
     return dict(managers)
 
 
-def analyze_luck(leagues_by_year, group_by="team"):
+def analyze_luck(leagues_by_year, group_by="team", identity_context=None):
     """Estimate schedule luck and scoring consistency from weekly results.
 
     Expected wins use the "all-play" method: each week, a team is credited
@@ -268,41 +245,27 @@ def analyze_luck(leagues_by_year, group_by="team"):
         "seasons": set(),
     })
 
+    labels = identity_labels(identity_context or leagues_by_year, group_by)
     for year, league in leagues_by_year.items():
-        # Collect decided weekly scores for the whole league, aligned by week
-        scores_by_week = defaultdict(list)
-        played = {}  # team -> list of (week_idx, score, outcome, mov)
-        for team in league.teams:
-            games = []
-            for w, score in enumerate(team.scores):
-                outcome = team.outcomes[w] if w < len(team.outcomes) else None
-                if outcome not in ("W", "L", "T") or score <= 0:
-                    continue
-                mov = team.mov[w] if w < len(team.mov) else 0
-                games.append((w, score, outcome, mov))
-                scores_by_week[w].append(score)
-            played[team] = games
-
-        for team, games in played.items():
-            key = _get_identity(team, group_by)
+        games = completed_games(league)
+        by_period = defaultdict(list)
+        for game in games:
+            by_period[game['period']].append(game['score'])
+        for game in games:
+            key = labels[(year, str(game['team'].team_id))]
             r = results[key]
-            r["seasons"].add(year)
-            for w, score, outcome, mov in games:
-                week_scores = scores_by_week[w]
-                others = len(week_scores) - 1
-                if others > 0:
-                    beaten = sum(1 for s in week_scores if s < score)
-                    tied = sum(1 for s in week_scores if s == score) - 1
-                    r["expected_wins"] += (beaten + tied * 0.5) / others
-                r["games"] += 1
-                r["weekly_scores"].append(score)
-                if outcome == "W":
-                    r["actual_wins"] += 1
-                if abs(mov) <= 5:
-                    if outcome == "W":
-                        r["close_wins"] += 1
-                    elif outcome == "L":
-                        r["close_losses"] += 1
+            r['seasons'].add(year)
+            score, outcome = game['score'], game['outcome']
+            scores = by_period[game['period']]
+            others = len(scores)-1
+            if others:
+                r['expected_wins'] += (sum(s < score for s in scores) + .5*(sum(s == score for s in scores)-1))/others
+            r['games'] += 1
+            r['weekly_scores'].append(score)
+            r['actual_wins'] += 1 if outcome == 'W' else .5 if outcome == 'T' else 0
+            if type(game['mov']) in (int,float) and abs(game['mov']) <= 5:
+                if outcome == 'W': r['close_wins'] += 1
+                elif outcome == 'L': r['close_losses'] += 1
 
     for name, r in results.items():
         scores = r.pop("weekly_scores")
@@ -322,6 +285,11 @@ def format_historical_report(leagues_by_year):
     lines.append("HISTORICAL LEAGUE ANALYSIS")
     lines.append("=" * 70)
 
+    coverage = getattr(leagues_by_year, 'coverage', {})
+    lines.append('Loaded seasons: ' + ', '.join(map(str, sorted(leagues_by_year))))
+    for year, error in coverage.get('failed_years', {}).items():
+        lines.append(f'MISSING {year}: {error}')
+    lines.append('Titles and average finishes require final season results. Activity totals are not a full transaction ledger.')
     # Team History
     team_history = analyze_team_history(leagues_by_year)
     lines.append("\n--- ALL-TIME TEAM RANKINGS ---")
@@ -330,7 +298,7 @@ def format_historical_report(leagues_by_year):
     lines.append("-" * 65)
     for name, data in sorted_teams:
         lines.append(
-            f"{name:<30} {data['all_time_win_pct']:>6.3f} {data['avg_finish']:>11.1f} "
+            f"{name:<30} {data['all_time_win_pct']:>6.3f} {str(data['avg_finish']) if data['avg_finish'] is not None else 'pending':>11} "
             f"{data['championships']:>7} {data['avg_points_for']:>8.1f}"
         )
 
@@ -346,13 +314,13 @@ def format_historical_report(leagues_by_year):
     # Manager Tendencies
     managers = analyze_manager_tendencies(leagues_by_year)
     lines.append("\n--- MANAGER TENDENCIES ---")
-    sorted_mgrs = sorted(managers.items(), key=lambda x: x[1]["avg_acquisitions_per_season"], reverse=True)
+    sorted_mgrs = sorted(managers.items(), key=lambda x: x[1]["avg_acquisitions_per_season"] if x[1]["avg_acquisitions_per_season"] is not None else -1, reverse=True)
     lines.append(f"{'Team':<30} {'Trades/Yr':>10} {'Pickups/Yr':>11} {'Drops/Yr':>9}")
     lines.append("-" * 63)
     for name, m in sorted_mgrs:
         lines.append(
-            f"{name:<30} {m['avg_trades_per_season']:>10.1f} "
-            f"{m['avg_acquisitions_per_season']:>11.1f} {m['avg_drops_per_season']:>9.1f}"
+            f"{name:<30} {str(m['avg_trades_per_season']) if m['avg_trades_per_season'] is not None else 'unknown':>10} "
+            f"{str(m['avg_acquisitions_per_season']) if m['avg_acquisitions_per_season'] is not None else 'unknown':>11} {str(m['avg_drops_per_season']) if m['avg_drops_per_season'] is not None else 'unknown':>9}"
         )
 
     # Head-to-Head Dominance
@@ -395,14 +363,14 @@ def format_historical_report(leagues_by_year):
         lines.append("\n--- BEST DRAFT PICKS (by total points) ---")
         lines.append(f"{'Year':>6} {'Pick':>5} {'Pos':<4} {'Player':<25} {'Team':<25} {'Points':>8}")
         lines.append("-" * 77)
-        for pick in draft_data[:15]:
+        for pick in [p for p in draft_data if p["stats_available"]][:15]:
             lines.append(
                 f"{pick['year']:>6} {pick['overall_pick']:>5} {pick['position']:<4} "
                 f"{pick['player']:<25} {pick['team']:<25} {pick['total_points']:>8.2f}"
             )
 
         lines.append("\n--- BIGGEST DRAFT BUSTS (early picks, low points) ---")
-        early_picks = [p for p in draft_data if p["overall_pick"] <= 30]
+        early_picks = [p for p in draft_data if p["overall_pick"] <= 30 and p["stats_available"] and p["completed"] and p["draft_type"] != "AUCTION"]
         busts = sorted(early_picks, key=lambda x: x["total_points"])
         for pick in busts[:10]:
             lines.append(

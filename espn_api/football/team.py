@@ -20,6 +20,7 @@ class Team(object):
         self.acquisition_budget_spent = data.get('transactionCounter', {}).get('acquisitionBudgetSpent', 0)
         self.acquisition_budget_spent_verified = 'acquisitionBudgetSpent' in data.get('transactionCounter', {})
         self.acquisition_budget_remaining = data.get('transactionCounter', {}).get('acquisitionBudgetRemaining')
+        self.history_counter_available = {key: key in data.get('transactionCounter', {}) for key in ('trades', 'acquisitions', 'drops')}
         self.drops = data.get('transactionCounter', {}).get('drops', 0)
         self.trades = data.get('transactionCounter', {}).get('trades', 0)
         self.move_to_ir = data.get('transactionCounter', {}).get('moveToIR', 0)
@@ -36,6 +37,7 @@ class Team(object):
             self.logo_url = ''
         self.roster = []
         self.schedule = []
+        self.matchup_periods = []
         self.scores = []
         self.outcomes = []
         self.mov = []
@@ -74,6 +76,7 @@ class Team(object):
                 self.outcomes.append(self._get_winner(matchup['winner'], away))
                 self.scores.append(score)
                 self.schedule.append(opponent_id)
+                self.matchup_periods.append(matchup.get('matchupPeriodId', len(self.schedule)))
     
     def _get_winner(self, winner: str, is_away: bool) -> str:
         if winner == 'UNDECIDED':

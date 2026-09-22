@@ -20,7 +20,6 @@ _POOL_TTL = 600  # seconds
 # history doesn't change, so cache effectively for the whole session.
 _intel_cache = {}
 _INTEL_TTL = 12 * 3600  # seconds
-INTEL_SEASONS_BACK = 4
 
 
 def get_ai_key(config=None):
@@ -92,8 +91,8 @@ def get_valued_pool(league, config=None):
 def get_league_intel(config):
     """Build (and cache) the league history intelligence profile.
 
-    Connects the previous INTEL_SEASONS_BACK seasons and mines draft, trade,
-    and results patterns. Returns the intel dict, or None if no history loads.
+    Discovers every ESPN-advertised season and uses verified completed
+    seasons for strategy. Partial/failed loads are exposed and not cached.
     """
     from ..league_connector import connect_multi_year
     from ..league_intel import build_league_intel
@@ -109,13 +108,16 @@ def get_league_intel(config):
         if time.time() - cached_time < _INTEL_TTL:
             return cached
 
-    years = list(range(year - INTEL_SEASONS_BACK, year))
+    years = None  # discover every ESPN-advertised season, not a guessed recent window
     leagues = connect_multi_year(
         league_cfg["league_id"], years,
-        league_cfg.get("espn_s2"), league_cfg.get("swid"),
+        league_cfg.get("espn_s2"), league_cfg.get("swid"), current_year=year,
     )
     intel = build_league_intel(leagues) if leagues else None
-    _intel_cache[key] = (intel, time.time())
+    if intel is not None:
+        intel["coverage"] = leagues.coverage
+    if intel is not None and leagues.coverage["all_requested_loaded"] and leagues.coverage["discovery_verified"]:
+        _intel_cache[key] = (intel, time.time())
     return intel
 
 

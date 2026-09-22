@@ -336,24 +336,31 @@ def switch_league():
 # ---------------------------------------------------------------------------
 
 @bp.route("/history")
+@bp.route("/api/history", endpoint="api_history")
 def history():
     config, league, err = get_league_or_redirect()
     if err:
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Could not connect to league; history coverage is unverified."}), 503
         return err
 
-    years_str = request.args.get("years", str(config.get("year", DEFAULT_YEAR)))
+    years_str = request.args.get("years", "all")
     try:
-        years = parse_year_range(years_str)
+        years = None if years_str.strip().lower() in ("", "all") else parse_year_range(years_str)
     except Exception:
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Invalid year range; use all, 2020-2024, or comma-separated years."}), 422
         flash("Invalid year range format. Use '2020-2024' or '2022,2023,2024'.", "danger")
         return redirect(url_for("main.dashboard"))
 
     league_cfg = get_league_config(config)
     leagues = connect_multi_year(
         league_cfg["league_id"], years,
-        league_cfg.get("espn_s2"), league_cfg.get("swid"),
+        league_cfg.get("espn_s2"), league_cfg.get("swid"), seed=league,
     )
 
+    if not leagues and request.path.startswith("/api/"):
+        return jsonify({"error": "No seasons loaded", "coverage": leagues.coverage}), 503
     if not leagues:
         flash("Could not load any seasons.", "danger")
         return redirect(url_for("main.dashboard"))
@@ -369,11 +376,20 @@ def history():
     draft_history = analyze_draft_history(leagues)
     luck = analyze_luck(leagues, group_by=group_by)
 
+    from ..history_data import coverage_for
+    coverage = coverage_for(leagues, draft_history)
+
+    if request.path.startswith('/api/'):
+        response = jsonify({'coverage':coverage, 'teams':team_history, 'scoring':scoring_trends,
+                            'managers':manager_tendencies, 'head_to_head':h2h, 'draft':draft_history, 'luck':luck})
+        response.headers['Cache-Control'] = 'no-store'
+        return response
     # Build flat rivalry list from h2h
     rivalries = _build_rivalry_list(h2h)
 
     return render_template(
         "history.html",
+        coverage=coverage,
         team_history=team_history,
         scoring_trends=scoring_trends,
         manager_tendencies=manager_tendencies,
@@ -393,7 +409,7 @@ def _build_chart_data(leagues, team_history, scoring_trends):
     years = sorted(leagues.keys())
     rank_by_team = {}
     for name, data in team_history.items():
-        by_year = {s["year"]: s["rank"] for s in data["seasons"]}
+        by_year = {s["year"]: s["final_rank"] for s in data["seasons"]}
         rank_by_team[name] = [by_year.get(y) for y in years]
 
     return {

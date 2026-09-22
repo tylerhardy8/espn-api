@@ -15,6 +15,7 @@ seasons fall back to round-based position priorities.
 from collections import defaultdict
 
 from .historical import get_manager_key, build_draft_stats_map, analyze_luck
+from .history_data import identity_labels, final_rank, season_complete, activity_count
 
 CORE_POSITIONS = ("QB", "RB", "WR", "TE", "K", "D/ST")
 
@@ -28,10 +29,18 @@ def build_league_intel(leagues_by_year):
 
     Returns {"years": [...], "league": {...}, "managers": {name: {...}}}.
     """
-    years = sorted(leagues_by_year.keys())
+    labels = identity_labels(leagues_by_year, "manager")
+    complete = {y:lg for y,lg in leagues_by_year.items() if season_complete(lg)}
+    years = sorted(complete)
+    manager_ids = {}
+    for y, lg in leagues_by_year.items():
+        for t in lg.teams:
+            owner_id = get_manager_key(t)[1]
+            if owner_id:
+                manager_ids[owner_id] = labels[(y, str(t.team_id))]
     managers = defaultdict(lambda: {
         "seasons": 0, "wins": 0, "games": 0, "finishes": [], "titles": 0,
-        "trades": 0, "acquisitions": 0,
+        "trades": 0, "acquisitions": 0, "trade_seasons": 0, "acquisition_seasons": 0,
         "draft_years": [],  # per-year draft style dicts
     })
     league_pos_spend = defaultdict(float)
@@ -47,28 +56,33 @@ def build_league_intel(leagues_by_year):
     player_prices = defaultdict(dict)     # playerId -> {year: {"bid", "manager", "team"}}
     budget_years = []                     # auction budget per season (for scaling)
 
-    for year, league in leagues_by_year.items():
+    for year, league in complete.items():
+        manager_of = lambda t: labels[(year, str(t.team_id))]
         # Results + activity
         champion = None
         for team in league.teams:
-            m = managers[_manager_of(team)]
+            m = managers[manager_of(team)]
             m["seasons"] += 1
-            m["wins"] += team.wins
+            m["wins"] += team.wins + .5 * team.ties
             m["games"] += team.wins + team.losses + team.ties
-            finish = team.final_standing or team.standing
-            m["finishes"].append(finish)
+            finish = final_rank(team, league)
+            if finish is not None:
+                m["finishes"].append(finish)
             if finish == 1:
                 m["titles"] += 1
                 champion = team
-            m["trades"] += team.trades
-            m["acquisitions"] += team.acquisitions
+            trades, acquisitions = activity_count(team, 'trades'), activity_count(team, 'acquisitions')
+            if trades is not None:
+                m['trades'] += trades; m['trade_seasons'] += 1
+            if acquisitions is not None:
+                m['acquisitions'] += acquisitions; m['acquisition_seasons'] += 1
 
         # Draft styles
         if not league.draft:
             continue
         stats_map = build_draft_stats_map(league)
         is_auction = any(p.bid_amount for p in league.draft)
-        year_styles = _analyze_draft_year(league, stats_map, is_auction)
+        year_styles = _analyze_draft_year(league, stats_map, is_auction, manager_of)
 
         for manager, style in year_styles.items():
             style["year"] = year
@@ -92,7 +106,7 @@ def build_league_intel(leagues_by_year):
                 if pick.bid_amount and getattr(pick, "team", None):
                     player_prices[pick.playerId][year] = {
                         "bid": pick.bid_amount,
-                        "manager": _manager_of(pick.team),
+                        "manager": manager_of(pick.team),
                         "team": pick.team.team_name,
                         "keeper": bool(getattr(pick, "keeper_status", False)),
                     }
@@ -105,11 +119,11 @@ def build_league_intel(leagues_by_year):
                 budget_years.append(past_budget)
 
         if champion is not None:
-            champ_style = year_styles.get(_manager_of(champion))
+            champ_style = year_styles.get(manager_of(champion))
             if champ_style:
                 champion_profiles.append({
                     "year": year,
-                    "manager": _manager_of(champion),
+                    "manager": manager_of(champion),
                     **{k: champ_style[k] for k in ("top3_share", "pos_spend", "total_spent")},
                 })
 
@@ -118,11 +132,11 @@ def build_league_intel(leagues_by_year):
         m["win_pct"] = round(m["wins"] / m["games"], 3) if m["games"] else 0
         m["avg_finish"] = round(sum(m["finishes"]) / len(m["finishes"]), 1) if m["finishes"] else 0
         s = m["seasons"] or 1
-        m["trades_per_season"] = round(m["trades"] / s, 1)
-        m["acquisitions_per_season"] = round(m["acquisitions"] / s, 1)
+        m["trades_per_season"] = round(m["trades"] / m["trade_seasons"], 1) if m["trade_seasons"] else None
+        m["acquisitions_per_season"] = round(m["acquisitions"] / m["acquisition_seasons"], 1) if m["acquisition_seasons"] else None
         m["draft_style"] = _aggregate_draft_style(m["draft_years"])
 
-    luck = analyze_luck(leagues_by_year, group_by="manager")
+    luck = analyze_luck(complete, group_by="manager", identity_context=leagues_by_year)
     for name, r in luck.items():
         if name in managers:
             managers[name]["luck_delta"] = r["luck_delta"]
@@ -169,22 +183,23 @@ def build_league_intel(leagues_by_year):
                 for pos, amt in style["avg_pos_spend"].items()
             }
 
-    return {"years": years, "league": league_summary, "managers": dict(managers)}
+    return {"years": years, "league": league_summary, "managers": dict(managers), "manager_ids": manager_ids}
 
 
-def _analyze_draft_year(league, stats_map, is_auction):
+def _analyze_draft_year(league, stats_map, is_auction, manager_of=_manager_of):
     """Per-manager draft style for one season."""
     by_manager = defaultdict(list)
     for pick in league.draft:
         if not (hasattr(pick, "team") and pick.team):
             continue
         total_points, _avg, position = stats_map.get(pick.playerId, (0, 0, ""))
-        by_manager[_manager_of(pick.team)].append({
+        by_manager[manager_of(pick.team)].append({
             "player": pick.playerName,
             "position": position,
             "bid": pick.bid_amount or 0,
             "round": pick.round_num,
             "points": total_points,
+            "stats_available": pick.playerId in stats_map,
             "keeper": pick.keeper_status,
         })
 
@@ -204,7 +219,7 @@ def _analyze_draft_year(league, stats_map, is_auction):
                 "total_spent": total,
                 "top3_share": round(sum(bids[:3]) / total, 3) if total else 0,
                 "pos_spend": dict(pos_spend),
-                "price_per_point": round(total / points, 2) if points else None,
+                "price_per_point": round(total / points, 2) if points and all(p["stats_available"] for p in picks) else None,
                 "biggest_buy": (
                     f"{biggest['player']} ${biggest['bid']}" if biggest and biggest["bid"] else None
                 ),
@@ -262,7 +277,13 @@ def format_intel_for_ai(intel, my_manager=None):
         return ""
 
     years = intel["years"]
-    lines = [f"=== LEAGUE HISTORY INTEL ({years[0]}-{years[-1]}, {len(years)} seasons) ==="]
+    if not years:
+        return "No completed historical seasons were verified."
+    lines = [f"=== LEAGUE HISTORY INTEL ({years[0]}-{years[-1]}, {len(years)} completed seasons) ==="]
+    coverage = intel.get("coverage", {})
+    if coverage.get("failed_years"):
+        lines.append("INCOMPLETE HISTORY: failed years " + ", ".join(map(str, coverage["failed_years"])))
+    lines.append("Trade/acquisition counts are season totals, not historical transaction details.")
 
     lg = intel["league"]
     if lg.get("pos_spend_share"):
@@ -325,6 +346,17 @@ def format_intel_for_ai(intel, my_manager=None):
         "of surplus, and expect runs at positions this league historically overspends on."
     )
     return "\n".join(lines)
+
+
+def manager_profile(intel, team):
+    """Resolve a current owner to their historical profile without name guessing."""
+    display, owner_id = get_manager_key(team)
+    identities = (intel or {}).get('manager_ids', {})
+    key = identities.get(owner_id)
+    # Backward compatibility only for intel built before ID metadata existed.
+    if key is None and 'manager_ids' not in (intel or {}):
+        key = display
+    return ((intel or {}).get('managers') or {}).get(key)
 
 
 def rival_profile(intel, manager, position):

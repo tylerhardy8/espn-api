@@ -43,6 +43,7 @@ class BaseLeague(ABC):
             self.current_week = self.scoringPeriodId if self.scoringPeriodId <= data['status']['finalScoringPeriod'] else data['status']['finalScoringPeriod']
         self.settings = SettingsClass(data['settings'])
         self.members = data.get('members', [])
+        self._history_status = {key: data.get('status', {}).get(key) for key in ('isFinished', 'latestScoringPeriod', 'finalScoringPeriod')}
         return data
 
     def _fetch_draft(self):

@@ -150,7 +150,8 @@ def owner_profile(team, league, intel=None):
         prof["manager"] = get_manager_key(team)[0]
     except Exception:
         return prof
-    m = ((intel or {}).get("managers") or {}).get(prof["manager"])
+    from .league_intel import manager_profile
+    m = manager_profile(intel, team)
     if not m:
         return prof
     tps = m.get("trades_per_season")

@@ -7,7 +7,7 @@
     <h2><i class="bi bi-clock-history text-info"></i> Historical Analysis</h2>
     <form class="d-flex gap-2" method="GET">
         <input type="text" class="form-control" name="years" value="{{ years }}"
-               placeholder="e.g. 2020-2024" style="width: 160px;">
+               placeholder="all or 2020-2024" style="width: 160px;">
         <input type="hidden" name="group_by" value="{{ group_by }}">
         <button type="submit" class="btn btn-outline-info">
             <i class="bi bi-arrow-clockwise"></i> Load
@@ -16,7 +16,7 @@
 </div>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <p class="text-muted mb-0">Analyzing {{ num_seasons }} season(s): {{ years }}</p>
+    <p class="text-muted mb-0">Analyzing {{ num_seasons }} loaded season(s)</p>
     <div class="btn-group" role="group">
         <a href="{{ url_for('main.history', years=years, group_by='team') }}"
            class="btn btn-sm {% if group_by == 'team' %}btn-info{% else %}btn-outline-info{% endif %}">
@@ -29,6 +29,15 @@
     </div>
 </div>
 
+<div class="card mb-4"><div class="card-header">History coverage</div><div class="card-body">
+<p>Loaded: {{ coverage.loaded_years|join(', ') }}.
+{% if not coverage.discovery_verified %}<strong class="text-warning">Full season discovery has not been verified.</strong>{% endif %}</p>
+{% for year, message in coverage.failed_years.items() %}<p class="text-danger">{{ year }} missing: {{ message }}</p>{% endfor %}
+<ul>{% for season in coverage.seasons %}<li>{{ season.year }}: {{ season.teams }} teams · {{ season.decided_team_matchups }} decided team-matchups · {{ season.draft_picks }} draft picks · {{ 'complete' if season.completed else 'in progress / final results unconfirmed' }}.
+{% for warning in season.warnings %}<span class="text-warning">{{ warning }}</span>{% endfor %}</li>{% endfor %}</ul>
+<details><summary>What this history includes</summary><p>{{ coverage.identity_scope }}</p><p>{{ coverage.score_scope }}</p><p>{{ coverage.transaction_detail }}</p><p>{{ coverage.scoring_scope }}</p>
+<p>Titles and average finishes use completed seasons only. Live records and activity totals include selected in-progress seasons; activity-per-season and points averages are not pace-adjusted.</p></details>
+</div></div>
 {# Franchise Rank Timeline #}
 {% if chart_data.years|length > 1 and chart_data.rank_by_team %}
 <div class="card mb-4">
@@ -85,7 +94,7 @@
                                 <span class="bar-value">{{ "%.3f"|format(data.all_time_win_pct) }}</span>
                             </div>
                         </td>
-                        <td class="text-center">{{ data.avg_finish }}</td>
+                        <td class="text-center">{{ data.avg_finish if data.avg_finish is not none else 'Pending' }}</td>
                         <td class="text-center">
                             {% if data.championships > 0 %}
                             <span class="badge bg-warning text-dark">{{ data.championships }} <i class="bi bi-trophy-fill"></i></span>
@@ -128,7 +137,7 @@
                         <th class="text-center" data-sort="num">Luck</th>
                         <th class="text-center" data-sort="num">Close Games (&le;5)</th>
                         <th class="text-center" data-sort="num">Score StDev</th>
-                        <th class="text-center" data-sort="num">Avg Score</th>
+                        <th class="text-center" data-sort="num">Avg Matchup Score</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -156,11 +165,11 @@
 </div>
 {% endif %}
 
-{# Scoring Trends #}
+{# Matchup Scoring Trends #}
 {% if scoring_trends %}
 <div class="card mb-4">
     <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-graph-up"></i> Scoring Trends</h5>
+        <h5 class="mb-0"><i class="bi bi-graph-up"></i> Matchup Scoring Trends</h5>
     </div>
     {% if chart_data.scoring.years|length > 1 %}
     <div class="chart-box">
@@ -173,9 +182,9 @@
                 <thead>
                     <tr>
                         <th class="text-center">Year</th>
-                        <th class="text-end">Avg Score</th>
-                        <th class="text-end">High Score</th>
-                        <th class="text-end">Low Score</th>
+                        <th class="text-end">Avg Matchup Score</th>
+                        <th class="text-end">High Matchup Score</th>
+                        <th class="text-end">Low Matchup Score</th>
                         <th class="text-center">Teams</th>
                     </tr>
                 </thead>
@@ -218,12 +227,12 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for name, m in manager_tendencies.items()|sort(attribute='1.avg_acquisitions_per_season', reverse=true) %}
+                            {% for name, m in manager_tendencies.items() %}
                             <tr {% if my_team and name.lower() == my_team.lower() %}class="table-active"{% endif %}>
                                 <td class="fw-bold">{{ name }}</td>
-                                <td class="text-center">{{ m.avg_trades_per_season }}</td>
-                                <td class="text-center">{{ m.avg_acquisitions_per_season }}</td>
-                                <td class="text-center">{{ m.avg_drops_per_season }}</td>
+                                <td class="text-center">{{ m.avg_trades_per_season if m.avg_trades_per_season is not none else "Unavailable" }}</td>
+                                <td class="text-center">{{ m.avg_acquisitions_per_season if m.avg_acquisitions_per_season is not none else "Unavailable" }}</td>
+                                <td class="text-center">{{ m.avg_drops_per_season if m.avg_drops_per_season is not none else "Unavailable" }}</td>
                                 <td class="text-center">{{ m.seasons }}</td>
                             </tr>
                             {% endfor %}
@@ -308,8 +317,8 @@
                                     {% if pick.position %}<span class="pos-badge ms-1">{{ pick.position }}</span>{% endif %}
                                 </td>
                                 <td><small>{{ pick.team }}</small></td>
-                                <td class="text-end">{{ "%.1f"|format(pick.total_points) }}</td>
-                                <td class="text-end text-muted">{{ "%.1f"|format(pick.avg_points) }}</td>
+                                <td class="text-end">{{ "%.1f"|format(pick.total_points) if pick.stats_available else "Unavailable" }}</td>
+                                <td class="text-end text-muted">{{ "%.1f"|format(pick.avg_points) if pick.stats_available else "—" }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -321,7 +330,7 @@
     <div class="col-lg-6">
         <div class="card h-100">
             <div class="card-header">
-                <h5 class="mb-0"><i class="bi bi-emoji-dizzy"></i> Biggest Busts <small class="text-muted fw-normal">(top-30 picks)</small></h5>
+                <h5 class="mb-0"><i class="bi bi-emoji-dizzy"></i> Biggest Busts <small class="text-muted fw-normal">(completed snake drafts, top-30 picks)</small></h5>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
@@ -337,7 +346,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% set early_picks = draft_history|selectattr('overall_pick', '<=', 30)|list %}
+                            {% set early_picks = draft_history|selectattr('stats_available')|selectattr('completed')|rejectattr('draft_type', 'equalto', 'AUCTION')|selectattr('overall_pick', '<=', 30)|list %}
                             {% for pick in (early_picks|sort(attribute='total_points'))[:12] %}
                             <tr>
                                 <td class="text-center">{{ pick.year }}</td>
@@ -347,8 +356,8 @@
                                     {% if pick.position %}<span class="pos-badge ms-1">{{ pick.position }}</span>{% endif %}
                                 </td>
                                 <td><small>{{ pick.team }}</small></td>
-                                <td class="text-end text-danger">{{ "%.1f"|format(pick.total_points) }}</td>
-                                <td class="text-end text-muted">{{ "%.1f"|format(pick.avg_points) }}</td>
+                                <td class="text-end text-danger">{{ "%.1f"|format(pick.total_points) if pick.stats_available else "Unavailable" }}</td>
+                                <td class="text-end text-muted">{{ "%.1f"|format(pick.avg_points) if pick.stats_available else "—" }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

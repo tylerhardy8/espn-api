@@ -85,8 +85,10 @@ class TestAnalyzeHeadToHead(unittest.TestCase):
         t2 = make_mock_team("Team B", 2, 0, 2, 0, 150, 200)
         t1.schedule = [t2, t2]
         t1.outcomes = ["W", "W"]
+        t1.scores = [100,100]
         t2.schedule = [t1, t1]
         t2.outcomes = ["L", "L"]
+        t2.scores = [75,75]
         league = make_mock_league([t1, t2])
 
         result = analyze_head_to_head({2023: league})
@@ -101,6 +103,8 @@ class TestAnalyzeScoringTrends(unittest.TestCase):
         t2 = make_mock_team("Team B", 2, 0, 2, 0, 150, 200, scores=[80, 90])
         league = make_mock_league([t1, t2])
 
+        t1.schedule, t2.schedule = [t2,t2], [t1,t1]
+        t1.outcomes, t2.outcomes = ["W","W"], ["L","L"]
         result = analyze_scoring_trends({2023: league})
 
         self.assertEqual(len(result), 1)
