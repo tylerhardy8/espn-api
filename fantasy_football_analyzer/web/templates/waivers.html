@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+
+{% block title %}Waiver Wire - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-person-plus text-warning"></i> Waiver Wire</h2>
+    <form class="d-flex gap-2" method="GET">
+        <select name="team_id" class="form-select" style="width: 200px;">
+            <option value="">Configured team</option>
+            {% for t in teams %}
+            <option value="{{ t.team_id }}" {% if t.team_id == team_id %}selected{% endif %}>{{ t.team_name }}</option>
+            {% endfor %}
+        </select>
+        <input type="number" class="form-control" name="week" value="{{ week }}"
+               min="1" max="18" style="width: 90px;" placeholder="Week">
+        <input type="number" name="max_spend" min="0" class="form-control" style="width:130px" placeholder="Run cap ($)" aria-label="Maximum waiver-run spend" value="{{ waiver.claim_plan.max_spend if waiver.claim_plan else '' }}">
+        <button type="submit" class="btn btn-outline-warning">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+    </form>
+</div>
+
+<p class="text-muted mb-4">Week {{ week }}{% if team_name %} &middot; Team: <strong>{{ team_name }}</strong>{% endif %}</p>
+
+<p><strong>Advisory only—claims must be entered in ESPN.</strong></p>
+{% if error %}<div class="alert alert-danger" role="alert">{{ error }} No bids or claims generated.</div>{% endif %}
+{% if waiver %}
+<p>{{ waiver.processing_time.value or 'Processing time: verify in ESPN' }} ({{ waiver.processing_time.source }}).</p>
+<p>FAAB: ${{ waiver.faab.mine.remaining }} remaining of ${{ waiver.faab.budget }} · {{ waiver.franchise_rule }}</p>
+{% for warning in waiver.faab.warnings %}<p class="text-warning">{{ warning }}</p>{% endfor %}
+<details class="mb-3"><summary>Bid assumptions and settings to verify</summary>
+<ul>{% for item in waiver.assumptions %}<li>{{ item }}</li>{% endfor %}
+{% for key, value in waiver.verify_in_espn.items() %}<li>{{ key|replace('_', ' ') }}: {{ value }}</li>{% endfor %}</ul></details>
+<div class="card mb-4"><div class="card-header">Roster-aware recommendations</div><div class="card-body">
+{% for rec in recommendations %}
+<div class="border-bottom py-3"><strong>{{ rec.name }} · {{ rec.position }}</strong>
+<span class="badge bg-warning text-dark">Estimate ${{ rec.faab.bid }} (${{ rec.faab.low }}–${{ rec.faab.high }})</span>
+<div>{{ rec.reason }}</div>
+<small>{{ '%.1f'|format(rec.ros_per_game) }} ROS points/playable game · {{ rec.remaining_playable_weeks }} playable weeks · {{ rec.faab.tier }}{% if rec.on_bye %} · BYE this week{% endif %}</small>
+<details><summary>Why this bid?</summary>
+<p>Lineup + bench marginal: {{ rec.faab.lineup_marginal }}; depth: {{ rec.faab.depth_premium }}; fragility: {{ rec.faab.fragility_premium }}; bye/injury: {{ rec.faab.coverage_premium }} points/game.</p>
+<p>Replacement: {{ '%.1f'|format(rec.faab.replacement_level.value) }} points/game (pool rank {{ rec.faab.replacement_level.rank }}); points above replacement: {{ rec.faab.points_over_replacement }}. Market ×{{ rec.faab.market_adjustment }}, history ×{{ rec.faab.aggressiveness }}, season clock ×{{ rec.faab.season_clock_adjustment }}.</p>
+<p>{{ rec.faab.rival_label }}</p><ul>{% for r in rec.faab.rivals[:3] %}<li>{{ r.team }}: {% if r.error %}{{ r.error }}{% else %}${{ r.low }}–${{ r.high }} · {{ r.demand.reason }}{% endif %}</li>{% endfor %}</ul>
+</details></div>
+{% else %}<p>No material roster improvements in the available pool.</p>{% endfor %}
+</div></div>
+<div class="card mb-4"><div class="card-header">Draft claim plan · maximum run spend ${{ waiver.claim_plan.max_spend }}</div><div class="card-body">
+<p>{{ waiver.claim_plan.alternatives_policy }}</p>
+<ol>{% for claim in waiver.claim_plan.claims %}<li>{{ claim.player }} · {{ claim.role }} · ${{ claim.bid }} · Drop: {{ claim.drop_player or 'open roster slot' }}{% if claim.drop_player %} ({{ claim.drop_ros_per_game }} ROS points/game){% endif %} · ${{ claim.remaining_if_all_prior_succeed }} left if this and prior claims succeed.</li>{% else %}<li>No safe automatic proposal. Review available roster space and drops in ESPN.</li>{% endfor %}</ol>
+<p>All-success spend: ${{ waiver.claim_plan.total_possible_spend }}. Balance afterward: ${{ waiver.claim_plan.remaining_if_all_succeed }}.</p>
+</div></div>
+{% endif %}
+
+{# Top Free Agents #}
+{% if top_agents %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-people"></i> Top Available Free Agents</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-sortable mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-center" data-sort="num">#</th>
+                        <th data-sort="text">Player</th>
+                        <th data-sort="text">Pos</th>
+                        <th data-sort="text">Team</th>
+                        <th class="text-end" data-sort="num">Proj</th>
+                        <th class="text-end" data-sort="num">Avg</th>
+                        <th class="text-end" data-sort="num">Own%</th>
+                        <th>Opp</th>
+                        <th class="text-center">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for agent in top_agents[:20] %}
+                    <tr {% if agent.on_bye %}class="text-muted"{% endif %}>
+                        <td class="text-center">{{ loop.index }}</td>
+                        <td class="fw-bold">
+                            {{ agent.name }}
+                            {% if agent.name in player_news %}
+                            <i class="bi bi-newspaper text-info ms-1" title="News available" data-bs-toggle="tooltip"></i>
+                            {% endif %}
+                        </td>
+                        <td><span class="pos-badge">{{ agent.position }}</span></td>
+                        <td>{{ agent.team }}</td>
+                        <td class="text-end">{{ "%.1f"|format(agent.projected_points) }}</td>
+                        <td class="text-end">{{ "%.1f"|format(agent.avg_points) }}</td>
+                        <td class="text-end">{{ "%.1f"|format(agent.percent_owned) }}%</td>
+                        <td>{{ agent.pro_opponent }}</td>
+                        <td class="text-center">
+                            {% if agent.on_bye %}
+                            <span class="badge bg-secondary">BYE</span>
+                            {% elif agent.injury_status and agent.injury_status != 'Active' %}
+                            <span class="badge bg-danger">{{ agent.injury_status }}</span>
+                            {% else %}
+                            <span class="badge bg-success">Active</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Streaming Recommendations #}
+{% if streamers %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-shuffle"></i> Streaming Recommendations</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            {% for pos in ["QB", "TE", "D/ST", "K"] %}
+            {% if pos in streamers and streamers[pos] %}
+            <div class="col-md-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h6 class="mb-0">{{ pos }}</h6>
+                    </div>
+                    <div class="list-group list-group-flush">
+                        {% for s in streamers[pos][:3] %}
+                        <div class="list-group-item">
+                            <strong>{{ s.name }}</strong>
+                            <br><small>vs {{ s.pro_opponent }} &middot; Proj: {{ "%.1f"|format(s.projected_points) }} &middot; Score: {{ "%.1f"|format(s.streamer_score) }}</small>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# Player News from RSS Feeds #}
+{% if news_items %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-newspaper"></i> Player News</h5>
+    </div>
+    <div class="card-body">
+        {% if player_news %}
+        <div class="mb-3">
+            <h6 class="text-info"><i class="bi bi-bullseye"></i> Relevant to Available Players</h6>
+            {% for player_name, articles in player_news.items() %}
+            <div class="mb-2 p-2 border rounded">
+                <strong>{{ player_name }}</strong>
+                {% for article in articles[:2] %}
+                <div class="ms-3 mt-1">
+                    <small>
+                        <a href="{{ article.link }}" target="_blank" rel="noopener" class="text-decoration-none">
+                            {{ article.title }}
+                        </a>
+                        <span class="text-muted">&mdash; {{ article.source }}</span>
+                    </small>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <h6 class="text-muted"><i class="bi bi-rss"></i> Latest Headlines</h6>
+        <div class="list-group list-group-flush" style="max-height: 300px; overflow-y: auto;">
+            {% for item in news_items[:15] %}
+            <a href="{{ item.link }}" target="_blank" rel="noopener"
+               class="list-group-item list-group-item-action py-2">
+                <div class="d-flex justify-content-between">
+                    <small class="fw-bold">{{ item.title }}</small>
+                    <small class="text-muted text-nowrap ms-2">{{ item.source }}</small>
+                </div>
+                {% if item.summary %}
+                <small class="text-muted">{{ item.summary[:120] }}{% if item.summary|length > 120 %}...{% endif %}</small>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# AI Waiver Analysis Button #}
+{% if ai_available %}
+<div class="card mb-4">
+    <div class="card-body">
+        <form id="ai-waiver-form">
+            <input type="hidden" name="team_id" value="{{ team_id or '' }}">
+            <input type="hidden" name="team_name" value="{{ team_name or '' }}">
+            <input type="hidden" name="week" value="{{ week }}">
+            <button type="submit" class="btn btn-info" id="ai-waiver-btn">
+                <i class="bi bi-robot"></i> Get AI Waiver Analysis
+            </button>
+            <span id="ai-waiver-spinner" class="spinner-border spinner-border-sm ms-2 d-none" role="status"></span>
+        </form>
+        <div id="ai-waiver-result"></div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('ai-waiver-form');
+    if (!form) return;
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const btn = document.getElementById('ai-waiver-btn');
+        const spinner = document.getElementById('ai-waiver-spinner');
+        const result = document.getElementById('ai-waiver-result');
+
+        btn.disabled = true;
+        spinner.classList.remove('d-none');
+
+        try {
+            const formData = new FormData(form);
+            const resp = await fetch('{{ url_for("main.waivers_ai") }}', {
+                method: 'POST',
+                body: formData,
+            });
+            result.innerHTML = await resp.text();
+        } catch (err) {
+            result.innerHTML = '<p class="text-danger mt-3">Failed to get AI analysis.</p>';
+        } finally {
+            btn.disabled = false;
+            spinner.classList.add('d-none');
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,6 @@
+# Global options; per-friend sites are generated into sites/ by add-friend.sh
+{
+	email {$CADDY_EMAIL:admin@{$DOMAIN}}
+}
+
+import /etc/caddy/sites/*.caddy

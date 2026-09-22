@@ -1,0 +1,10 @@
+.git
+.github
+.devcontainer
+.pytest_cache
+__pycache__
+*.pyc
+*.egg-info
+.env
+*.md
+!README.md

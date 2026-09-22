@@ -1,0 +1,486 @@
+{% extends "base.html" %}
+
+{% block title %}Live Draft - Fantasy Football Analyzer{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-broadcast text-danger"></i> Live Draft Assistant</h2>
+    <form class="d-flex gap-2" method="GET">
+        <select name="team" class="form-select" style="width: 220px;">
+            <option value="">Select Your Team</option>
+            {% for t in teams %}
+            <option value="{{ t }}" {% if team_name and t.lower() == team_name.lower() %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-outline-danger">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+    </form>
+</div>
+
+{# Status / controls #}
+<div class="d-flex align-items-center gap-2 mb-3">
+    <span id="poll-status" class="badge bg-secondary">Stopped</span>
+    <button class="btn btn-sm btn-outline-success" id="start-btn" onclick="startPolling()">
+        <i class="bi bi-play-fill"></i> Start Tracking
+    </button>
+    <button class="btn btn-sm btn-outline-danger d-none" id="stop-btn" onclick="stopPolling()">
+        <i class="bi bi-stop-fill"></i> Stop
+    </button>
+    <span class="text-muted small ms-2" id="draft-progress"></span>
+</div>
+
+{# Positional run alert #}
+<div id="run-alert" class="alert alert-warning d-none py-2 mb-3">
+    <i class="bi bi-exclamation-triangle-fill"></i> <span id="run-alert-text"></span>
+</div>
+
+{# My-team auction stat cards #}
+<div id="auction-stats" class="row g-3 mb-4 d-none">
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value text-success" id="stat-remaining">$-</div>
+            <div class="stat-label">My Remaining</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value" id="stat-max-bid">$-</div>
+            <div class="stat-label">My Max Bid</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value" id="stat-slots">-</div>
+            <div class="stat-label">Slots Left</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-value" id="stat-inflation">-</div>
+            <div class="stat-label">Inflation</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    {# Best Available board #}
+    <div class="col-lg-7">
+        <div class="card h-100" id="best-available-card" style="display: none;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-star"></i> Best Available</h5>
+                <div class="btn-group btn-group-sm" role="group" id="pos-filter">
+                    <button type="button" class="btn btn-info" data-pos="">All</button>
+                    <button type="button" class="btn btn-outline-info" data-pos="QB">QB</button>
+                    <button type="button" class="btn btn-outline-info" data-pos="RB">RB</button>
+                    <button type="button" class="btn btn-outline-info" data-pos="WR">WR</button>
+                    <button type="button" class="btn btn-outline-info" data-pos="TE">TE</button>
+                    <button type="button" class="btn btn-outline-info" data-pos="K">K</button>
+                    <button type="button" class="btn btn-outline-info" data-pos="D/ST">D/ST</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="px-3 py-1 small text-muted border-bottom d-flex justify-content-between align-items-center">
+                    <span id="sources-line">Sources: ESPN</span>
+                    <span>
+                        <span id="marked-count" class="me-2"></span>
+                        <button class="btn btn-sm btn-outline-secondary py-0 d-none" id="undo-mark"
+                                onclick="undoLastMark()">Undo last mark</button>
+                    </span>
+                </div>
+                <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th class="text-center">Tier</th>
+                                <th class="text-end">Value</th>
+                                <th class="text-end">ESPN $</th>
+                                <th class="text-end">Adj. $</th>
+                            </tr>
+                        </thead>
+                        <tbody id="best-available"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Budget board #}
+    <div class="col-lg-5">
+        <div class="card h-100" id="budget-card" style="display: none;">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-cash-stack"></i> Team Budgets</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Team</th>
+                                <th>Remaining</th>
+                                <th class="text-end">Max Bid</th>
+                                <th class="text-center">Slots</th>
+                            </tr>
+                        </thead>
+                        <tbody id="budgets"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    {# Recent sales #}
+    <div class="col-lg-7">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-list-check"></i> Recent Sales</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-center">#</th>
+                                <th>Player</th>
+                                <th>Team</th>
+                                <th class="text-end">Price</th>
+                                <th class="text-end">vs Value</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recent-picks">
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">
+                                    Click <strong>Start Tracking</strong> to begin polling for picks.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Team rosters #}
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-people-fill"></i> Rosters</h5>
+            </div>
+            <div class="card-body" id="team-picks" style="max-height: 420px; overflow-y: auto;">
+                <p class="text-muted text-center py-3">Waiting for draft data...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# AI Advisor #}
+{% if ai_available and team_name %}
+<div class="card border-info mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-robot text-info"></i> AI Draft Advisor</h5>
+        <div class="d-flex align-items-center gap-3">
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="auto-ai" checked>
+                <label class="form-check-label small" for="auto-ai">Auto-advise</label>
+            </div>
+            <div class="form-check form-switch mb-0" title="When you click Advise Now, Claude searches the web for same-day news on its targets (slower, a few extra cents). Auto-advice always skips search to stay fast.">
+                <input class="form-check-input" type="checkbox" id="web-search" checked>
+                <label class="form-check-label small" for="web-search"><i class="bi bi-globe"></i> Live news search</label>
+            </div>
+            <button class="btn btn-sm btn-info" id="ai-btn" onclick="getAIRecommendation()">
+                <i class="bi bi-robot"></i> Advise Now
+            </button>
+            <span id="ai-spinner" class="spinner-border spinner-border-sm d-none text-info" role="status"></span>
+        </div>
+    </div>
+    <div class="card-body" id="ai-result">
+        <p class="text-muted text-center py-3 mb-0">
+            Advice appears here automatically as sales come in (at most every 90s), or click
+            <strong>Advise Now</strong>. Advising for <strong>{{ team_name }}</strong>.
+        </p>
+    </div>
+</div>
+{% elif not ai_available %}
+<div class="card border-secondary mb-4">
+    <div class="card-body text-center py-3">
+        <i class="bi bi-robot text-muted"></i>
+        <span class="text-muted">AI recommendations require <code>ANTHROPIC_API_KEY</code>. See <a href="{{ url_for('main.setup') }}">Setup</a>.</span>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const POLL_INTERVAL = 10000;      // 10 seconds
+const AI_THROTTLE_MS = 90000;     // auto-advice at most every 90s
+const MY_TEAM = {{ (team_name or '')|tojson }};
+const MY_TEAM_LC = MY_TEAM.toLowerCase();
+
+let pollTimer = null;
+let lastPickCount = 0;
+let lastAiCall = 0;
+let currentPosFilter = "";
+let lastBestAvailable = [];
+
+async function fetchDraftState() {
+    try {
+        const url = '{{ url_for("main.api_draft_state") }}' + (MY_TEAM ? `?team=${encodeURIComponent(MY_TEAM)}` : '');
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('API error');
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        updateUI(data);
+    } catch (err) {
+        console.error('Poll error:', err);
+    }
+}
+
+function deltaBadge(delta) {
+    if (delta === null || delta === undefined) return '<span class="text-muted">—</span>';
+    if (delta > 0.5) return `<span class="badge bg-success bg-opacity-75">bargain +$${delta.toFixed(0)}</span>`;
+    if (delta < -0.5) return `<span class="badge bg-danger bg-opacity-75">overpay -$${Math.abs(delta).toFixed(0)}</span>`;
+    return '<span class="badge bg-secondary bg-opacity-75">fair</span>';
+}
+
+function updateUI(data) {
+    const summary = data.summary;
+    let progress = `${summary.players_drafted} players ${data.is_auction ? 'sold' : 'drafted'} · ${summary.players_available} available`;
+    if (data.my_slot) {
+        const next = data.my_slot.upcoming.map(p => '#' + p).join(', ');
+        progress += ` · You draft ${data.my_slot.slot} of ${data.my_slot.total} — your picks: ${next}`;
+    }
+    document.getElementById('draft-progress').textContent = progress;
+
+    // Recent sales
+    const recentBody = document.getElementById('recent-picks');
+    if (data.recent && data.recent.length > 0) {
+        let html = '';
+        for (const pick of [...data.recent].reverse()) {
+            const isMine = MY_TEAM_LC && pick.team_name.toLowerCase() === MY_TEAM_LC;
+            html += `<tr class="${isMine ? 'table-active' : ''}">
+                <td class="text-center">${pick.overall}</td>
+                <td class="fw-bold">${pick.player_name}
+                    ${pick.position ? `<span class="pos-badge ms-1">${pick.position}</span>` : ''}
+                    ${pick.keeper ? ' <span class="badge bg-info bg-opacity-50">K</span>' : ''}</td>
+                <td>${pick.team_name}${isMine ? ' <i class="bi bi-star-fill text-warning"></i>' : ''}</td>
+                <td class="text-end fw-bold">$${pick.bid_amount}</td>
+                <td class="text-end">${deltaBadge(pick.value_delta)}</td>
+            </tr>`;
+        }
+        recentBody.innerHTML = html;
+    }
+
+    // Rosters
+    const teamPicksEl = document.getElementById('team-picks');
+    if (data.team_picks && Object.keys(data.team_picks).length > 0) {
+        let html = '';
+        for (const [teamName, picks] of Object.entries(data.team_picks).sort((a, b) => a[0].localeCompare(b[0]))) {
+            const isMine = MY_TEAM_LC && teamName.toLowerCase() === MY_TEAM_LC;
+            const players = picks.map(p =>
+                `${p.player}${p.position ? ` (${p.position})` : ''} $${p.price}`).join(', ');
+            html += `<div class="mb-2 p-2 border rounded ${isMine ? 'border-warning' : ''}">
+                <strong>${teamName}</strong>${isMine ? ' <i class="bi bi-star-fill text-warning"></i>' : ''}
+                <br><small class="text-muted">${players || 'No players yet'}</small>
+            </div>`;
+        }
+        teamPicksEl.innerHTML = html;
+    }
+
+    // Auction sections
+    if (data.is_auction && data.budgets) {
+        document.getElementById('auction-stats').classList.remove('d-none');
+        document.getElementById('budget-card').style.display = '';
+        document.getElementById('best-available-card').style.display = '';
+
+        const infl = data.inflation || 1.0;
+        const inflEl = document.getElementById('stat-inflation');
+        inflEl.textContent = `${infl.toFixed(2)}x`;
+        inflEl.className = 'stat-value ' + (infl > 1.05 ? 'text-danger' : infl < 0.95 ? 'text-success' : '');
+
+        const mine = data.budgets.find(b => b.team.toLowerCase() === MY_TEAM_LC);
+        if (mine) {
+            document.getElementById('stat-remaining').textContent = `$${mine.remaining}`;
+            document.getElementById('stat-max-bid').textContent = `$${mine.max_bid}`;
+            document.getElementById('stat-slots').textContent = mine.slots_left;
+        }
+
+        const maxRemaining = Math.max(...data.budgets.map(b => b.remaining), 1);
+        document.getElementById('budgets').innerHTML = data.budgets.map(b => {
+            const isMine = b.team.toLowerCase() === MY_TEAM_LC;
+            return `<tr class="${isMine ? 'table-active' : ''}">
+                <td>${b.team}${isMine ? ' <i class="bi bi-star-fill text-warning"></i>' : ''}</td>
+                <td><div class="bar-cell">
+                    <div class="bar-track"><div class="bar-fill bar-green" style="width: ${Math.round(b.remaining / maxRemaining * 100)}%"></div></div>
+                    <span class="bar-value">$${b.remaining}</span>
+                </div></td>
+                <td class="text-end fw-bold">$${b.max_bid}</td>
+                <td class="text-center">${b.slots_left}</td>
+            </tr>`;
+        }).join('');
+
+        lastBestAvailable = data.best_available || [];
+        renderBestAvailable();
+
+        const src = data.sources || {};
+        const srcParts = ['ESPN'];
+        if (src.sleeper) srcParts.push('Sleeper injuries/depth');
+        if (src.fantasypros) srcParts.push(`FantasyPros ECR (${src.fp_matched} matched)`);
+        document.getElementById('sources-line').textContent = 'Sources: ' + srcParts.join(' · ');
+
+        const runAlert = document.getElementById('run-alert');
+        if (data.active_run) {
+            document.getElementById('run-alert-text').textContent =
+                `Position run: ${data.active_run.count} of the last 5 sales were ${data.active_run.position}s.`;
+            runAlert.classList.remove('d-none');
+        } else {
+            runAlert.classList.add('d-none');
+        }
+    }
+
+    // Auto AI advice on new sales, throttled
+    const autoToggle = document.getElementById('auto-ai');
+    if (summary.total_picks > lastPickCount && lastPickCount > 0 &&
+        autoToggle && autoToggle.checked && MY_TEAM &&
+        Date.now() - lastAiCall > AI_THROTTLE_MS) {
+        getAIRecommendation(true);  // auto calls skip web search (speed + quota)
+    }
+    lastPickCount = summary.total_picks;
+}
+
+const markedStack = [];
+
+async function markDrafted(playerId, name, undo = false) {
+    try {
+        const resp = await fetch('{{ url_for("main.api_mark_drafted") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({player_id: playerId, undo}),
+        });
+        const data = await resp.json();
+        if (!undo) markedStack.push({playerId, name});
+        document.getElementById('marked-count').textContent =
+            data.marked ? `${data.marked} marked drafted` : '';
+        document.getElementById('undo-mark').classList.toggle('d-none', markedStack.length === 0);
+        fetchDraftState();
+    } catch (err) {
+        console.error('mark failed', err);
+    }
+}
+
+function undoLastMark() {
+    const last = markedStack.pop();
+    if (last) markDrafted(last.playerId, last.name, true);
+    document.getElementById('undo-mark').classList.toggle('d-none', markedStack.length === 0);
+}
+
+function playerFlags(e) {
+    const flags = [];
+    const inj = (e.injury_status || '').toUpperCase();
+    if (inj && inj !== 'ACTIVE' && inj !== 'NORMAL') {
+        const cls = (inj === 'OUT' || inj === 'IR' || inj === 'PUP' || inj === 'SUSPENSION') ? 'bg-danger' : 'bg-warning text-dark';
+        flags.push(`<span class="badge ${cls} bg-opacity-75 ms-1" title="Injury status">${inj}</span>`);
+    }
+    if (e.practice) flags.push(`<small class="text-warning ms-1" title="Practice participation">${e.practice}</small>`);
+    if (e.depth_chart) flags.push(`<small class="text-muted ms-1" title="Depth chart">${e.depth_chart}</small>`);
+    if (e.trending_adds) flags.push(`<small class="text-info ms-1" title="Sleeper adds last 24h"><i class="bi bi-fire"></i>${e.trending_adds}</small>`);
+    return flags.join('');
+}
+
+function renderBestAvailable() {
+    const rows = lastBestAvailable
+        .filter(e => !currentPosFilter || e.position === currentPosFilter)
+        .slice(0, 25)
+        .map(e => `<tr>
+            <td class="fw-bold">
+                <button class="btn btn-sm btn-outline-danger py-0 px-1 me-1" title="Mark as drafted"
+                        onclick="markDrafted(${e.player_id}, '${e.name.replace(/'/g, "\\'")}')">&times;</button>
+                ${e.name}
+                <span class="pos-badge ms-1">${e.position}</span>
+                <small class="text-muted">${e.team}</small>
+                ${playerFlags(e)}</td>
+            <td class="text-center"><span class="badge bg-secondary bg-opacity-75">T${e.tier}</span>
+                ${e.fp_ecr ? `<br><small class="text-muted" title="FantasyPros expert consensus rank">ECR #${e.fp_ecr}</small>` : ''}</td>
+            <td class="text-end">$${e.value.toFixed(0)}</td>
+            <td class="text-end text-muted">${e.espn_value ? '$' + e.espn_value.toFixed(0) : '—'}</td>
+            <td class="text-end fw-bold text-info">$${e.adjusted_value.toFixed(0)}</td>
+        </tr>`);
+    document.getElementById('best-available').innerHTML =
+        rows.join('') || '<tr><td colspan="5" class="text-center text-muted py-3">No players match.</td></tr>';
+}
+
+document.getElementById('pos-filter').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-pos]');
+    if (!btn) return;
+    currentPosFilter = btn.dataset.pos;
+    document.querySelectorAll('#pos-filter button').forEach(b =>
+        b.className = 'btn ' + (b === btn ? 'btn-info' : 'btn-outline-info'));
+    renderBestAvailable();
+});
+
+function startPolling() {
+    if (pollTimer) return;
+    document.getElementById('poll-status').textContent = 'Live';
+    document.getElementById('poll-status').className = 'badge bg-success';
+    document.getElementById('start-btn').classList.add('d-none');
+    document.getElementById('stop-btn').classList.remove('d-none');
+    fetchDraftState();
+    pollTimer = setInterval(fetchDraftState, POLL_INTERVAL);
+}
+
+function stopPolling() {
+    if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+    }
+    document.getElementById('poll-status').textContent = 'Stopped';
+    document.getElementById('poll-status').className = 'badge bg-secondary';
+    document.getElementById('start-btn').classList.remove('d-none');
+    document.getElementById('stop-btn').classList.add('d-none');
+}
+
+async function getAIRecommendation(isAuto = false) {
+    if (!MY_TEAM) {
+        alert('Please select your team first.');
+        return;
+    }
+    const btn = document.getElementById('ai-btn');
+    const spinner = document.getElementById('ai-spinner');
+    const result = document.getElementById('ai-result');
+    if (!btn || btn.disabled) return;
+
+    lastAiCall = Date.now();
+    btn.disabled = true;
+    spinner.classList.remove('d-none');
+
+    try {
+        const resp = await fetch('{{ url_for("main.api_draft_recommendation") }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                team_name: MY_TEAM,
+                // Auto-advice skips web search (faster, saves search quota);
+                // the manual "Advise Now" button honors the toggle.
+                web_search: !isAuto && !!document.getElementById('web-search')?.checked,
+            }),
+        });
+        const data = await resp.json();
+        if (data.error) {
+            result.innerHTML = `<p class="text-danger mb-0"><i class="bi bi-exclamation-triangle"></i> ${data.error}</p>`;
+        } else {
+            const time = new Date().toLocaleTimeString();
+            result.innerHTML = `<div class="text-muted small mb-2">Updated ${time}</div>
+                <pre style="white-space: pre-wrap; font-family: inherit;" class="mb-0">${data.recommendation}</pre>`;
+        }
+    } catch (err) {
+        result.innerHTML = '<p class="text-danger mb-0">Failed to get AI recommendation.</p>';
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('d-none');
+    }
+}
+</script>
+{% endblock %}

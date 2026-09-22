@@ -14,3 +14,8 @@ build
 dist
 env
 coverage*
+# Per-deployment state for deploy/ (friend instances)
+deploy/.env
+deploy/data/
+deploy/sites/
+deploy/friends.yml

@@ -80,7 +80,7 @@ class League(BaseLeague):
 
     def refresh(self):
         '''Gets latest league data. This can be used instead of creating a new League class each week'''
-        data = super()._fetch_league()
+        data = super()._fetch_league(SettingsClass=Settings)
 
         self.nfl_week = data['status']['latestScoringPeriod']
         self._fetch_teams(data)

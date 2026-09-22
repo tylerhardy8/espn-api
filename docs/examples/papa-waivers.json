@@ -1,0 +1,448 @@
+{
+  "team": "Kaitlan Callin' Audibles",
+  "team_id": 14,
+  "week": 3,
+  "generated_at": "synthetic-fixture",
+  "settings": {
+    "source": "ESPN API",
+    "lineup_slots": {
+      "QB": 1,
+      "RB": 2,
+      "WR": 2,
+      "TE": 1,
+      "RB/WR/TE": 2,
+      "K": 1,
+      "LB": 1,
+      "DL": 1,
+      "DB": 1,
+      "P": 1,
+      "HC": 1,
+      "BE": 6,
+      "IR": 1,
+      "D/ST": 0
+    },
+    "faab_enabled": true,
+    "initial_faab": 150
+  },
+  "processing_time": {
+    "value": "Tuesday at 11:00 a.m. America/New_York",
+    "source": "configured league metadata",
+    "api_verified": false
+  },
+  "verify_in_espn": {
+    "minimum_bid": "verify in ESPN",
+    "tiebreak": "verify in ESPN",
+    "claim_processing_order": "verify in ESPN",
+    "conditional_claims": "verify in ESPN",
+    "drop_eligibility_and_locks": "verify in ESPN",
+    "player_waiver_availability": "verify in ESPN"
+  },
+  "advisory": "Advisory only\u2014claims must be entered in ESPN.",
+  "franchise_rule": "Waiver acquisitions are not eligible for the 2027 franchise tag.",
+  "assumptions": [
+    "Value and bid coefficients are uncalibrated planning priors, not winning-bid forecasts.",
+    "Future weekly projections fall back to league-scored season projection / 17 NFL games. Known byes are zero; missing bye data is unknown.",
+    "An OUT/IR/suspended player is unavailable this week; future return dates are unknown. Review injuries before bidding.",
+    "Roster targets use flex and bench allocation priors; replacement uses league demand and one quarter of projected reserve demand.",
+    "Displayed add value is before a drop. Review the proposed drop and its lost value; do not auto-submit.",
+    "Zero-dollar estimates are possible; ESPN minimum bid and claim rules must be verified."
+  ],
+  "pool": {
+    "evaluated": 10,
+    "fetch_limit": 1000,
+    "unknown_bye_count": 0,
+    "scope": "eligible positive-projection players in ESPN response"
+  },
+  "recommendations": [
+    {
+      "name": "Available RB 0",
+      "player_id": 500,
+      "position": "RB",
+      "ros_per_game": 12.0,
+      "projected_total": 168.0,
+      "remaining_playable_weeks": 14,
+      "bye_week": 7,
+      "projection_source": "ESPN",
+      "injury_status": "Active",
+      "projected_points": 12.0,
+      "franchise_2027_eligible": false,
+      "reason": "bench insurance value; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots; bye coverage: Week 9, Week 13",
+      "upgrade_per_week": 0.0,
+      "lineup_gain": 0.24,
+      "faab": {
+        "bid": 4,
+        "recommended": 4,
+        "low": 3,
+        "high": 6,
+        "tier": "depth / insurance",
+        "base_tier": "depth / insurance",
+        "replacement_level": {
+          "value": 6.0,
+          "rank": 7,
+          "pool_size": 7,
+          "starter_target": 2.8,
+          "roster_target": 5.2
+        },
+        "points_over_replacement": 6.0,
+        "lineup_marginal": 0.24,
+        "starting_gain": 0.0,
+        "depth_premium": 2.304,
+        "fragility_premium": 1.44,
+        "coverage_premium": 1.6,
+        "bye_week_gains": {
+          "9": 12.0,
+          "13": 12.0
+        },
+        "injury_coverage_gain": 0.0,
+        "roster_count": 2,
+        "roster_target": 5.2,
+        "no_reserves": true,
+        "score": 5.584,
+        "reason": "bench insurance value; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots; bye coverage: Week 9, Week 13; advisory estimate; verify minimum bid in ESPN",
+        "market_adjustment": 1.2,
+        "aggressiveness": 1.0,
+        "season_clock_adjustment": 1.0706,
+        "base_budget_share": 0.0335,
+        "adjusted_budget_share": 0.043,
+        "my_remaining": 103,
+        "rivals": [
+          {
+            "team": "Thin RB rival",
+            "team_id": 2,
+            "remaining": 130,
+            "low": 33,
+            "high": 62,
+            "demand": {
+              "roster_count": 2,
+              "roster_target": 5.2,
+              "no_reserves": true,
+              "score": 15.744,
+              "reason": "starting lineup / flex improvement; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots"
+            }
+          },
+          {
+            "team": "Deep RB rival",
+            "team_id": 3,
+            "remaining": 130,
+            "low": 0,
+            "high": 2,
+            "demand": {
+              "roster_count": 6,
+              "roster_target": 5.2,
+              "no_reserves": false,
+              "score": 1.4,
+              "reason": "bench insurance value; bye coverage: Week 9"
+            }
+          },
+          {
+            "team": "Team 4",
+            "team_id": 4,
+            "remaining": 100,
+            "low": 0,
+            "high": 2,
+            "demand": {
+              "roster_count": 6,
+              "roster_target": 5.2,
+              "no_reserves": false,
+              "score": 1.4,
+              "reason": "bench insurance value; bye coverage: Week 9"
+            }
+          }
+        ],
+        "rival_label": "Estimated rival bid ranges; not winning-bid predictions",
+        "units": "points per remaining playable game",
+        "verify_in_espn": {
+          "minimum_bid": "verify in ESPN",
+          "tiebreak": "verify in ESPN",
+          "claim_processing_order": "verify in ESPN",
+          "conditional_claims": "verify in ESPN",
+          "drop_eligibility_and_locks": "verify in ESPN",
+          "player_waiver_availability": "verify in ESPN"
+        }
+      }
+    },
+    {
+      "name": "Available RB 1",
+      "player_id": 501,
+      "position": "RB",
+      "ros_per_game": 11.0,
+      "projected_total": 154.0,
+      "remaining_playable_weeks": 14,
+      "bye_week": 7,
+      "projection_source": "ESPN",
+      "injury_status": "Active",
+      "projected_points": 11.0,
+      "franchise_2027_eligible": false,
+      "reason": "bench insurance value; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots; bye coverage: Week 9, Week 13",
+      "upgrade_per_week": 0.0,
+      "lineup_gain": 0.19,
+      "faab": {
+        "bid": 4,
+        "recommended": 4,
+        "low": 2,
+        "high": 6,
+        "tier": "depth / insurance",
+        "base_tier": "depth / insurance",
+        "replacement_level": {
+          "value": 6.0,
+          "rank": 7,
+          "pool_size": 7,
+          "starter_target": 2.8,
+          "roster_target": 5.2
+        },
+        "points_over_replacement": 5.0,
+        "lineup_marginal": 0.19,
+        "starting_gain": 0.0,
+        "depth_premium": 2.112,
+        "fragility_premium": 1.32,
+        "coverage_premium": 1.4667,
+        "bye_week_gains": {
+          "9": 11.0,
+          "13": 11.0
+        },
+        "injury_coverage_gain": 0.0,
+        "roster_count": 2,
+        "roster_target": 5.2,
+        "no_reserves": true,
+        "score": 5.0887,
+        "reason": "bench insurance value; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots; bye coverage: Week 9, Week 13; advisory estimate; verify minimum bid in ESPN",
+        "market_adjustment": 1.2,
+        "aggressiveness": 1.0,
+        "season_clock_adjustment": 1.0706,
+        "base_budget_share": 0.0305,
+        "adjusted_budget_share": 0.0392,
+        "my_remaining": 103,
+        "rivals": [
+          {
+            "team": "Thin RB rival",
+            "team_id": 2,
+            "remaining": 130,
+            "low": 30,
+            "high": 57,
+            "demand": {
+              "roster_count": 2,
+              "roster_target": 5.2,
+              "no_reserves": true,
+              "score": 14.432,
+              "reason": "starting lineup / flex improvement; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots"
+            }
+          },
+          {
+            "team": "Deep RB rival",
+            "team_id": 3,
+            "remaining": 130,
+            "low": 0,
+            "high": 2,
+            "demand": {
+              "roster_count": 6,
+              "roster_target": 5.2,
+              "no_reserves": false,
+              "score": 1.2833,
+              "reason": "bench insurance value; bye coverage: Week 9"
+            }
+          },
+          {
+            "team": "Team 4",
+            "team_id": 4,
+            "remaining": 100,
+            "low": 0,
+            "high": 2,
+            "demand": {
+              "roster_count": 6,
+              "roster_target": 5.2,
+              "no_reserves": false,
+              "score": 1.2833,
+              "reason": "bench insurance value; bye coverage: Week 9"
+            }
+          }
+        ],
+        "rival_label": "Estimated rival bid ranges; not winning-bid predictions",
+        "units": "points per remaining playable game",
+        "verify_in_espn": {
+          "minimum_bid": "verify in ESPN",
+          "tiebreak": "verify in ESPN",
+          "claim_processing_order": "verify in ESPN",
+          "conditional_claims": "verify in ESPN",
+          "drop_eligibility_and_locks": "verify in ESPN",
+          "player_waiver_availability": "verify in ESPN"
+        }
+      }
+    },
+    {
+      "name": "Available RB 2",
+      "player_id": 502,
+      "position": "RB",
+      "ros_per_game": 10.0,
+      "projected_total": 140.0,
+      "remaining_playable_weeks": 14,
+      "bye_week": 7,
+      "projection_source": "ESPN",
+      "injury_status": "Active",
+      "projected_points": 10.0,
+      "franchise_2027_eligible": false,
+      "reason": "bench insurance value; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots; bye coverage: Week 9, Week 13",
+      "upgrade_per_week": 0.0,
+      "lineup_gain": 0.14,
+      "faab": {
+        "bid": 4,
+        "recommended": 4,
+        "low": 2,
+        "high": 5,
+        "tier": "depth / insurance",
+        "base_tier": "depth / insurance",
+        "replacement_level": {
+          "value": 6.0,
+          "rank": 7,
+          "pool_size": 7,
+          "starter_target": 2.8,
+          "roster_target": 5.2
+        },
+        "points_over_replacement": 4.0,
+        "lineup_marginal": 0.14,
+        "starting_gain": 0.0,
+        "depth_premium": 1.92,
+        "fragility_premium": 1.2,
+        "coverage_premium": 1.3333,
+        "bye_week_gains": {
+          "9": 10.0,
+          "13": 10.0
+        },
+        "injury_coverage_gain": 0.0,
+        "roster_count": 2,
+        "roster_target": 5.2,
+        "no_reserves": true,
+        "score": 4.5933,
+        "reason": "bench insurance value; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots; bye coverage: Week 9, Week 13; advisory estimate; verify minimum bid in ESPN",
+        "market_adjustment": 1.2,
+        "aggressiveness": 1.0,
+        "season_clock_adjustment": 1.0706,
+        "base_budget_share": 0.0276,
+        "adjusted_budget_share": 0.0354,
+        "my_remaining": 103,
+        "rivals": [
+          {
+            "team": "Thin RB rival",
+            "team_id": 2,
+            "remaining": 130,
+            "low": 27,
+            "high": 51,
+            "demand": {
+              "roster_count": 2,
+              "roster_target": 5.2,
+              "no_reserves": true,
+              "score": 13.12,
+              "reason": "starting lineup / flex improvement; RB depth: 2 rostered vs 5.2 target; no reserve behind 2 required RB slots"
+            }
+          },
+          {
+            "team": "Deep RB rival",
+            "team_id": 3,
+            "remaining": 130,
+            "low": 0,
+            "high": 2,
+            "demand": {
+              "roster_count": 6,
+              "roster_target": 5.2,
+              "no_reserves": false,
+              "score": 1.1667,
+              "reason": "bench insurance value; bye coverage: Week 9"
+            }
+          },
+          {
+            "team": "Team 4",
+            "team_id": 4,
+            "remaining": 100,
+            "low": 0,
+            "high": 1,
+            "demand": {
+              "roster_count": 6,
+              "roster_target": 5.2,
+              "no_reserves": false,
+              "score": 1.1667,
+              "reason": "bench insurance value; bye coverage: Week 9"
+            }
+          }
+        ],
+        "rival_label": "Estimated rival bid ranges; not winning-bid predictions",
+        "units": "points per remaining playable game",
+        "verify_in_espn": {
+          "minimum_bid": "verify in ESPN",
+          "tiebreak": "verify in ESPN",
+          "claim_processing_order": "verify in ESPN",
+          "conditional_claims": "verify in ESPN",
+          "drop_eligibility_and_locks": "verify in ESPN",
+          "player_waiver_availability": "verify in ESPN"
+        }
+      }
+    }
+  ],
+  "faab": {
+    "enabled": true,
+    "budget": 150,
+    "warnings": [],
+    "source": "ESPN settings and transaction counters",
+    "mine": {
+      "team": "Kaitlan Callin' Audibles",
+      "team_id": 14,
+      "spent": 47,
+      "remaining": 103,
+      "source": "derived from ESPN acquisition budget minus reported spending"
+    },
+    "history_count": 0
+  },
+  "recent_bids": [],
+  "claim_plan": {
+    "claims": [
+      {
+        "player_id": 500,
+        "player": "Available RB 0",
+        "bid": 4,
+        "role": "primary",
+        "alternative_group": "run-target",
+        "drop_player_id": 42,
+        "drop_player": "Bench TE 2",
+        "drop_ros_per_game": 1.0,
+        "priority": 1,
+        "remaining_if_all_prior_succeed": 99
+      },
+      {
+        "player_id": 501,
+        "player": "Available RB 1",
+        "bid": 4,
+        "role": "fallback",
+        "alternative_group": "run-target",
+        "drop_player_id": 41,
+        "drop_player": "Bench TE 1",
+        "drop_ros_per_game": 2.0,
+        "priority": 2,
+        "remaining_if_all_prior_succeed": 95
+      },
+      {
+        "player_id": 502,
+        "player": "Available RB 2",
+        "bid": 4,
+        "role": "fallback",
+        "alternative_group": "run-target",
+        "drop_player_id": 40,
+        "drop_player": "Bench TE 0",
+        "drop_ros_per_game": 3.0,
+        "priority": 3,
+        "remaining_if_all_prior_succeed": 91
+      }
+    ],
+    "max_spend": 20,
+    "total_possible_spend": 12,
+    "remaining_if_all_succeed": 91,
+    "alternatives_policy": "Reserve every bid. Group labels express mutually exclusive intent only; verify ESPN support or enter one alternative.",
+    "verify_in_espn": {
+      "minimum_bid": "verify in ESPN",
+      "tiebreak": "verify in ESPN",
+      "claim_processing_order": "verify in ESPN",
+      "conditional_claims": "verify in ESPN",
+      "drop_eligibility_and_locks": "verify in ESPN",
+      "player_waiver_availability": "verify in ESPN"
+    },
+    "advisory": "Advisory only\u2014claims must be entered in ESPN."
+  },
+  "fixture_notice": "SYNTHETIC TEST DATA: $47 spent / $103 remaining and all available players are illustrative, not live league balances or recommendations. Selected response fields and top three targets shown."
+}
