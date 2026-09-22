@@ -24,7 +24,7 @@ import os
 
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.fantasy_football_analyzer.json")
 DEFAULT_YEAR = 2026
-PROFILE_FIELDS = ("league_id", "year", "team_name")
+PROFILE_FIELDS = ("league_id", "year", "team_name", "team_id")
 
 
 def _normalize(raw):
@@ -39,6 +39,7 @@ def _normalize(raw):
             "league_id": cfg["league_id"],
             "year": cfg.get("year", DEFAULT_YEAR),
             "team_name": cfg.get("team_name", ""),
+            "team_id": cfg.get("team_id"),
         }]
 
     cfg["leagues"] = leagues

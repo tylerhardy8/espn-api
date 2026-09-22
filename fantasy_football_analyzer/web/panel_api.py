@@ -602,113 +602,60 @@ def api_trades_ai():
 # Waivers
 # ---------------------------------------------------------------------------
 
-_waiver_cache = {}
-_WAIVER_TTL = 180
-
-
-def _news_json(player_news):
-    out = {}
-    for name, items in (player_news or {}).items():
-        out[name] = [
-            {"title": str(i.get("title", ""))[:160], "link": i.get("link", ""),
-             "source": i.get("source", ""), "published": str(i.get("published", ""))}
-            for i in (items or [])[:3]
-        ] if isinstance(items, list) else []
-    return out
-
-
-@bp.route("/api/waivers")
-def api_waivers():
-    config, league, err = get_league_or_redirect()
-    if err:
-        return jsonify({"error": "Could not connect to league"}), 500
-    team_name = request.args.get("team") or config.get("team_name") or ""
-    week = request.args.get("week", type=int) or league.current_week
-    key = (league.league_id, team_name.lower(), week)
-    cached = _waiver_cache.get(key)
-    if cached and time.time() - cached[1] < _WAIVER_TTL and not request.args.get("fresh"):
-        return jsonify(cached[0])
-
-    try:
-        recommendations = get_waiver_recommendations(league, my_team_name=team_name, week=week)
-    except Exception:
-        recommendations = []
-    try:
-        streamers = {pos: lst[:3] for pos, lst in find_streamers(league, week=week).items()}
-    except Exception:
-        streamers = {}
-    try:
-        top_agents = get_top_free_agents(league, week=week, size=30)[:15]
-    except Exception:
-        top_agents = []
-    news = {}
+def _waiver_news(result):
+    """Optional news enrichment must not replace or modify verified values."""
     try:
         items = fetch_news(max_items=25)
-        names = list({a["name"] for a in top_agents} | {r["name"] for r in recommendations[:12]})
-        news = _news_json(match_news_to_players(items, names))
+        names = list({r['name'] for r in result['recommendations']} | {r['name'] for r in result['top_agents']})
+        matches = match_news_to_players(items, names)
+        result['news'] = {name: [{**row, 'published': str(row.get('published', ''))} for row in rows[:3]]
+                          for name, rows in matches.items()}
+        return items, matches
     except Exception:
-        pass
-    faab, bids_history = None, []
-    try:
-        faab, bids_history = attach_faab_bids(league, config, team_name, recommendations[:12], top_agents)
-    except Exception as e:
-        faab = {"error": str(e)}
-    payload = {
-        "team": team_name, "week": week,
-        "recommendations": recommendations[:12],
-        "streamers": streamers,
-        "top_agents": top_agents,
-        "news": news,
-        "faab": faab,
-        "recent_bids": bids_history[:10],
-        "ai_available": ai_available(config),
-    }
-    _waiver_cache[key] = (payload, time.time())
-    return jsonify(payload)
+        return [], {}
 
 
-def attach_faab_bids(league, config, team_name, recommendations, top_agents):
-    """Add a suggested FAAB bid to each recommendation (mutates) and return
-    (faab_state_with_my_row, bid_history)."""
-    from ..faab import faab_state, bid_history, suggest_bid
-    from ..ros import ros_projection
-    from ..lineup import marginal_value
-    from ..auction import league_profile
-    state = faab_state(league)
-    if not state["enabled"]:
-        return state, []
-    history = bid_history(league)
-    engine = _engine(league, config)
-    me = _my_team(league, team_name)
-    profile = league_profile(league)
-    # Free-agent pool with ROS points (replacement levels come from this)
+def _waiver_response(claims=None, max_spend=None, payload=None):
+    from ..waiver_service import build_waiver_payload
+    from ..waiver_model import WaiverError
+    config, league, err = get_league_or_redirect()
+    if err:
+        return jsonify({"error": "Could not connect to league; no bids calculated."}), 503
+    data = payload if payload is not None else request.args
     try:
-        agents = league.free_agents(size=150)
-    except Exception:
-        agents = []
-    fa_cards = [{"position": getattr(a, "position", ""), "ros": ros_projection(a, league), "name": a.name}
-                for a in agents]
-    fa_by_name = {c["name"]: c for c in fa_cards}
-    rival_needs = {}
-    for t in league.teams:
-        if me is not None and t.team_id == me.team_id:
-            continue
-        try:
-            rival_needs[t.team_name] = set(engine.needs(t))
-        except Exception:
-            rival_needs[t.team_name] = set()
-    mine = [{"position": c["position"], "value": c["ros"]} for c in engine.cards(me)] if me is not None else []
-    for rec in recommendations:
-        card = fa_by_name.get(rec["name"]) or {"position": rec.get("position", ""), "ros": float(rec.get("projected_points", 0)), "name": rec["name"]}
-        marginal = None
-        if mine:
-            marginal = round(marginal_value(mine, {"position": card["position"], "value": card["ros"]}, profile), 1)
-        rec["faab"] = suggest_bid(card, team_name, league, fa_cards, my_marginal=marginal,
-                                  rival_needs=rival_needs, history=history)
-        rec["lineup_gain"] = marginal
-    state["mine"] = next((t for t in state["teams"] if t["team"].lower() == team_name.lower()), None)
-    state["history_count"] = len(history)
-    return state, history
+        result = build_waiver_payload(
+            league, config, team_id=data.get('team_id'), team_name=data.get('team'),
+            week=data.get('week'), claims=claims, max_spend=max_spend, refresh=True)
+        result['ai_available'] = ai_available(config)
+        _waiver_news(result)
+        response = jsonify(result)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    except (WaiverError, ValueError, TypeError) as exc:
+        return jsonify({'error': str(exc), 'recommendations': [], 'claim_plan': None,
+                        'advisory': 'Advisory only—claims must be entered in ESPN.'}), 422
+
+
+@bp.route('/api/waivers')
+def api_waivers():
+    return _waiver_response()
+
+
+@bp.route('/api/waiver-plan', methods=['POST', 'OPTIONS'])
+def api_waiver_plan():
+    if request.method == 'OPTIONS':
+        return ('', 204)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or 'claims' not in payload or 'max_spend' not in payload:
+        return jsonify({'error': 'Provide claims and max_spend; nothing is submitted to ESPN.'}), 400
+    from ..faab import dollars
+    try:
+        if not isinstance(payload['claims'], list):
+            raise ValueError('claims must be a list')
+        dollars(payload['max_spend'], 'maximum waiver-run spend')
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 422
+    return _waiver_response(payload['claims'], payload['max_spend'], payload)
 
 
 @bp.route("/api/waivers-ai", methods=["POST", "OPTIONS"])
@@ -724,6 +671,6 @@ def api_waivers_ai():
     team_name = payload.get("team_name") or config.get("team_name")
     week = payload.get("week") or league.current_week
     try:
-        return jsonify({"advice": waiver_ai_advice(config, league, team_name, week)})
+        return jsonify({"advice": waiver_ai_advice(config, league, team_name, week, team_id=payload.get('team_id'))})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

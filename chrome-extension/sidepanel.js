@@ -76,6 +76,7 @@ function resetLeagueState() {
   teams = [];
   tradesLoaded = false;
   waiversLoaded = false;
+  waiverTeamId = null;
   rostersCache = null;
   $("advice").textContent = "Press Advise now — or wait for the next pick with auto on.";
   $("trade-partners").innerHTML = "";
@@ -91,6 +92,7 @@ async function ensureIdentity() {
   if (myTeam) return;
   const me = await api("/api/me");
   myTeam = me.team_name || "";
+  waiverTeamId = me.team_id || null;
   activeLeague = me.league || "";
   aiOk = !!me.ai_available;
   $("team-label").textContent = myTeam || "no team set — see app Setup";
@@ -530,32 +532,40 @@ function newsFor(news, name) {
   return items.slice(0, 1).map((n) => `<span class="news">📰 ${esc(n.title)}</span>`).join("");
 }
 
+let waiverTeamId = null;
 async function loadWaivers() {
-  if (!myTeam) return;
+  if (!myTeam && !waiverTeamId) return;
   waiversLoaded = true;
   $("waiver-meta").textContent = "Loading free agents…";
+  $("faab-row").hidden = true;
+  $("waiver-recs").innerHTML = "";
   try {
     const week = parseInt($("waiver-week").value, 10);
-    const d = await api("/api/waivers?team=" + encodeURIComponent(myTeam) + (week ? "&week=" + week : ""));
+    const d = await api((waiverTeamId ? "/api/waivers?team_id=" + waiverTeamId : "/api/waivers?team=" + encodeURIComponent(myTeam)) + (week ? "&week=" + week : ""));
     $("waiver-week").value = d.week;
-    $("waiver-meta").textContent = `${d.recommendations.length} upgrades · ${d.top_agents.length} top agents`;
+    $("waiver-meta").textContent = `${d.recommendations.length} roster-aware targets · Advisory only—enter claims in ESPN. ${d.processing_time?.value || "Verify processing time"} (${d.processing_time?.source || "verify in ESPN"})`;
     const f = d.faab;
+    if (d.team_id) waiverTeamId = d.team_id;
     if (f && f.enabled) {
       const mine = f.mine ? `You: <strong>$${f.mine.remaining}</strong> of $${f.budget}` : `Budget $${f.budget}`;
       const rivals = (f.teams || []).filter((t) => !f.mine || t.team !== f.mine.team).slice(0, 4)
-        .map((t) => `<span class="t">${esc(t.team.slice(0, 14))} $${t.remaining}</span>`).join("");
+        .map((t) => `<span class="t">${esc(t.team.slice(0, 14))} ${t.remaining == null ? "balance unknown" : "$" + t.remaining}</span>`).join("");
       const hist = (d.recent_bids || []).slice(0, 3).map((h) => `${esc(h.player)} $${h.bid}`).join(", ");
       $("faab-row").hidden = false;
       $("faab-row").innerHTML = `FAAB · ${mine} · ${rivals}${hist ? `<div>Recent wins: ${hist}</div>` : ""}`;
     } else {
       $("faab-row").hidden = true;
     }
+    if (d.claim_plan) {
+      const p = d.claim_plan;
+      $("faab-row").innerHTML += `<div>Run cap $${p.max_spend} · all-success spend $${p.total_possible_spend} · remaining $${p.remaining_if_all_succeed}. Verify minimum bid, ties, processing order and conditional claims in ESPN.</div>`;
+    }
     $("waiver-recs").innerHTML = d.recommendations.map((r) => {
       const b = r.faab;
       const bid = b ? (b.bid > 0
-        ? `<span class="flag trend">bid $${b.bid}</span><span class="sub"> (${esc(b.tier)}, rival ~$${b.expected_rival})</span>`
-        : `<span class="flag">skip</span>`) : "";
-      return agentLine(r, `<span class="sub">+${r.upgrade_per_week}/wk over ${esc(r.replaces)}${r.lineup_gain != null ? ` · lineup ${r.lineup_gain >= 0 ? "+" : ""}${r.lineup_gain}` : ""}</span> ${bid}${newsFor(d.news, r.name)}`);
+        ? `<span class="flag trend">bid $${b.bid}</span><span class="sub"> (${esc(b.tier)}, range $${b.low}–$${b.high})</span>`
+        : `<span class="flag">$0 estimate—verify minimum</span>`) : "";
+      return agentLine(r, `<span class="sub">${esc(r.reason)} · ${r.ros_per_game.toFixed(1)} ROS pts/game</span> ${bid}${newsFor(d.news, r.name)}`);
     }).join("") || `<div class="meta">No clear upgrades.</div>`;
     $("waiver-streamers").innerHTML = Object.entries(d.streamers || {}).map(([pos, lst]) =>
       `<div class="pos-head">${esc(pos)}</div>` + lst.map((a) => agentLine(a, `<span class="sub">score ${a.streamer_score}</span>`)).join("")
@@ -574,7 +584,7 @@ async function waiversAi() {
   $("waiver-advice").textContent = "";
   try {
     const week = parseInt($("waiver-week").value, 10) || undefined;
-    const d = await postJson("/api/waivers-ai", { team_name: myTeam, week });
+    const d = await postJson("/api/waivers-ai", { team_name: myTeam, team_id: waiverTeamId, week });
     $("waiver-advice").textContent = d.advice;
     $("waiver-advice-meta").textContent = new Date().toLocaleTimeString();
   } catch (e) {

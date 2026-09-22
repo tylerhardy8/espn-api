@@ -63,7 +63,9 @@ class LeagueTest(TestCase):
         self.assertEqual(league.current_week, 16)
         self.assertEqual(len(league.teams), 10)
 
+        slots_before_refresh = league.settings.position_slot_counts
         league.refresh()
+        self.assertEqual(league.settings.position_slot_counts, slots_before_refresh)
         self.assertEqual(repr(league), 'League(123, 2018)')
         self.assertEqual(repr(league.settings), 'Settings(FXBG League)')
         self.assertEqual(league.current_week, 16)

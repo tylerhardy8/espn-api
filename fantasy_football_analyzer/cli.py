@@ -192,7 +192,7 @@ def cmd_waivers(args):
     league = connect_league(league_cfg["league_id"], year,
                             league_cfg["espn_s2"], league_cfg["swid"])
 
-    report = format_waiver_report(league, my_team_name=team_name, week=week)
+    report = format_waiver_report(league, my_team_name=team_name, week=week, config=config, team_id=args.team_id)
     print(report)
 
     if getattr(args, "ai", False):
@@ -274,7 +274,7 @@ def cmd_full(args):
     print()
     print(format_trade_report(league, my_team_name=team_name))
     print()
-    print(format_waiver_report(league, my_team_name=team_name))
+    print(format_waiver_report(league, my_team_name=team_name, config=config))
 
 
 def main():
@@ -319,7 +319,8 @@ Examples:
 
     # waivers
     waiver_parser = subparsers.add_parser("waivers", help="Waiver wire recommendations")
-    waiver_parser.add_argument("--team", help="Your team name")
+    waiver_parser.add_argument("--team", help="Your team name (legacy fallback)")
+    waiver_parser.add_argument("--team-id", type=int, help="Stable ESPN team ID")
     waiver_parser.add_argument("--year", help="Season year")
     waiver_parser.add_argument("--week", help="NFL week number")
     waiver_parser.add_argument("--ai", action="store_true",

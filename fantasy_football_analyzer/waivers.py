@@ -72,7 +72,8 @@ def find_bye_week_fillers(league, team, week=None):
             bye_players.append(player)
 
     fillers = {}
-    for pos in ["QB", "RB", "WR", "TE", "D/ST", "K"]:
+    from .waiver_model import profile_for
+    for pos in profile_for(league)["starter_targets"]:
         agents = get_top_free_agents(league, week=week, size=20, position=pos)
         available = [a for a in agents if not a["on_bye"]]
         if available:
@@ -87,7 +88,9 @@ def find_streamers(league, week=None):
     Prioritizes favorable matchups (low pro_pos_rank = better matchup).
     """
     streamers = {}
-    for pos in STREAMING_POSITIONS:
+    from .waiver_model import profile_for
+    eligible = profile_for(league)["starter_targets"]
+    for pos in sorted(STREAMING_POSITIONS & set(eligible)):
         agents = get_top_free_agents(league, week=week, size=30, position=pos)
         available = [a for a in agents if not a["on_bye"]]
 
@@ -102,137 +105,25 @@ def find_streamers(league, week=None):
     return streamers
 
 
-def get_waiver_recommendations(league, my_team_name=None, week=None):
-    """Generate personalized waiver wire recommendations.
-
-    Considers team needs, matchups, and player value.
-    """
-    if week is None:
-        week = league.current_week
-
-    all_agents = get_top_free_agents(league, week=week, size=100)
-
-    my_team = None
-    if my_team_name:
-        for team in league.teams:
-            if team.team_name.lower() == my_team_name.lower():
-                my_team = team
-                break
-
-    recommendations = []
-    if my_team:
-        # Assess roster by position
-        roster_by_pos = defaultdict(list)
-        for player in my_team.roster:
-            roster_by_pos[player.position].append(player)
-
-        # Per-game metric: actual average once games are played, else the
-        # season projection prorated (pre-season / week 1 everything is 0)
-        played = any((p.total_points or 0) > 0 for p in my_team.roster)
-
-        def per_game(player):
-            if played and (player.avg_points or 0) > 0:
-                return float(player.avg_points)
-            try:
-                from .ros import ros_projection
-                return ros_projection(player, league) / 17.0
-            except Exception:
-                return float(getattr(player, "projected_total_points", 0) or 0) / 17.0
-
-        weakest_at_pos = {}
-        for pos, players in roster_by_pos.items():
-            if players:
-                # Compare like with like: the upgrade math below is per-game
-                weakest = min(players, key=per_game)
-                weakest_at_pos[pos] = {
-                    "name": weakest.name,
-                    "total_points": weakest.total_points,
-                    "avg_points": round(per_game(weakest), 2),
-                }
-
-        for agent in all_agents:
-            if agent["on_bye"]:
-                continue
-
-            pos = agent["position"]
-            current_weakest = weakest_at_pos.get(pos)
-            if not current_weakest:
-                continue
-
-            agent_pg = agent["avg_points"] if (played and agent["avg_points"] > 0) else \
-                round((agent.get("projected_total") or agent["projected_points"] * 17.0) / 17.0, 2)
-            upgrade = round(agent_pg - current_weakest["avg_points"], 2)
-            if upgrade > 0:
-                recommendations.append({
-                    **agent,
-                    "replaces": current_weakest["name"],
-                    "replaces_avg": round(current_weakest["avg_points"], 2),
-                    "upgrade_per_week": upgrade,
-                })
-
-        recommendations.sort(key=lambda x: x["upgrade_per_week"], reverse=True)
-    else:
-        recommendations = all_agents
-
-    return recommendations
+def get_waiver_recommendations(league, my_team_name=None, week=None, team_id=None, config=None):
+    """Evaluate the whole roster, including depth and future bye coverage."""
+    from .waiver_model import resolve_team
+    from .waiver_service import ranked_candidates
+    team = resolve_team(league, team_id, my_team_name, config)
+    return ranked_candidates(league, team, week or league.current_week)
 
 
-def format_waiver_report(league, my_team_name=None, week=None):
-    """Generate a formatted waiver wire report."""
-    lines = []
-    lines.append("=" * 70)
-    lines.append("WAIVER WIRE RECOMMENDATIONS")
-    lines.append("=" * 70)
-
-    if week is None:
-        week = league.current_week
-    lines.append(f"Week {week}")
-
-    # Top Free Agents
-    top_agents = get_top_free_agents(league, week=week, size=30)
-    if top_agents:
-        lines.append("\n--- TOP AVAILABLE FREE AGENTS ---")
-        lines.append(
-            f"{'Rank':>5} {'Player':<25} {'Pos':<5} {'Team':<5} {'Proj':>6} "
-            f"{'Avg':>6} {'Own%':>6} {'Opp':>5} {'Rank':>5}"
-        )
-        lines.append("-" * 73)
-        for i, agent in enumerate(top_agents[:20], 1):
-            lines.append(
-                f"{i:>5} {agent['name']:<25} {agent['position']:<5} {agent['team']:<5} "
-                f"{agent['projected_points']:>6.1f} {agent['avg_points']:>6.1f} "
-                f"{agent['percent_owned']:>5.1f}% {agent['pro_opponent']:>5} "
-                f"{agent['pro_pos_rank']:>5}"
-            )
-
-    # Streaming Recommendations
-    streamers = find_streamers(league, week=week)
-    if any(streamers.values()):
-        lines.append("\n--- STREAMING RECOMMENDATIONS ---")
-        for pos in ["QB", "TE", "D/ST", "K"]:
-            if pos in streamers and streamers[pos]:
-                lines.append(f"\n  Best {pos} Streamers:")
-                for s in streamers[pos][:3]:
-                    lines.append(
-                        f"    {s['name']:<25} vs {s['pro_opponent']:<5} "
-                        f"Proj: {s['projected_points']:.1f}  Score: {s['streamer_score']:.1f}"
-                    )
-
-    # Personalized Recommendations
-    if my_team_name:
-        recs = get_waiver_recommendations(league, my_team_name, week=week)
-        if recs:
-            lines.append(f"\n--- RECOMMENDED PICKUPS FOR YOUR TEAM ---")
-            lines.append(
-                f"{'Player':<25} {'Pos':<5} {'Proj':>6} {'Avg':>6} "
-                f"{'Replaces':<20} {'Upgrade':>8}"
-            )
-            lines.append("-" * 73)
-            for rec in recs[:10]:
-                lines.append(
-                    f"{rec['name']:<25} {rec['position']:<5} {rec['projected_points']:>6.1f} "
-                    f"{rec['avg_points']:>6.1f} {rec.get('replaces', 'N/A'):<20} "
-                    f"+{rec.get('upgrade_per_week', 0):>7.1f}"
-                )
-
-    return "\n".join(lines)
+def format_waiver_report(league, my_team_name=None, week=None, team_id=None, config=None):
+    """CLI report uses the same verified, roster-aware model as the web app."""
+    from .waiver_service import build_waiver_payload
+    payload = build_waiver_payload(league, config, team_id=team_id, team_name=my_team_name, week=week)
+    lines = [payload['advisory'], f"Week {payload['week']} · {payload['team']} (ID {payload['team_id']})",
+             f"FAAB: ${payload['faab']['mine']['remaining']} of ${payload['faab']['budget']}",
+             f"Processing: {payload['processing_time']['value']} ({payload['processing_time']['source']})"]
+    for rec in payload['recommendations'][:12]:
+        b = rec['faab']
+        lines.append(f"{rec['name']} ({rec['position']}): {rec['ros_per_game']:.1f} ROS pts/game; "
+                     f"bid estimate ${b['bid']} (${b['low']}-${b['high']}). {rec['reason']}")
+    lines += [payload['franchise_rule'], 'VERIFY IN ESPN: ' + ', '.join(payload['verify_in_espn'])]
+    lines += payload['assumptions']
+    return '\n'.join(lines)

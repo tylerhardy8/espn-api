@@ -18,6 +18,8 @@ class Team(object):
         self.points_against = round(data['record']['overall']['pointsAgainst'], 2)
         self.acquisitions = data.get('transactionCounter', {}).get('acquisitions', 0)
         self.acquisition_budget_spent = data.get('transactionCounter', {}).get('acquisitionBudgetSpent', 0)
+        self.acquisition_budget_spent_verified = 'acquisitionBudgetSpent' in data.get('transactionCounter', {})
+        self.acquisition_budget_remaining = data.get('transactionCounter', {}).get('acquisitionBudgetRemaining')
         self.drops = data.get('transactionCounter', {}).get('drops', 0)
         self.trades = data.get('transactionCounter', {}).get('trades', 0)
         self.move_to_ir = data.get('transactionCounter', {}).get('moveToIR', 0)

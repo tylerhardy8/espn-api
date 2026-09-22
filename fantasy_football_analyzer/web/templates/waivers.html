@@ -6,14 +6,15 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2><i class="bi bi-person-plus text-warning"></i> Waiver Wire</h2>
     <form class="d-flex gap-2" method="GET">
-        <select name="team" class="form-select" style="width: 200px;">
-            <option value="">All Teams</option>
+        <select name="team_id" class="form-select" style="width: 200px;">
+            <option value="">Configured team</option>
             {% for t in teams %}
-            <option value="{{ t }}" {% if team_name and t.lower() == team_name.lower() %}selected{% endif %}>{{ t }}</option>
+            <option value="{{ t.team_id }}" {% if t.team_id == team_id %}selected{% endif %}>{{ t.team_name }}</option>
             {% endfor %}
         </select>
         <input type="number" class="form-control" name="week" value="{{ week }}"
                min="1" max="18" style="width: 90px;" placeholder="Week">
+        <input type="number" name="max_spend" min="0" class="form-control" style="width:130px" placeholder="Run cap ($)" aria-label="Maximum waiver-run spend" value="{{ waiver.claim_plan.max_spend if waiver.claim_plan else '' }}">
         <button type="submit" class="btn btn-outline-warning">
             <i class="bi bi-arrow-clockwise"></i>
         </button>
@@ -22,47 +23,33 @@
 
 <p class="text-muted mb-4">Week {{ week }}{% if team_name %} &middot; Team: <strong>{{ team_name }}</strong>{% endif %}</p>
 
-{# Personalized Pickup Recommendations #}
-{% if recommendations and team_name %}
-<div class="card mb-4">
-    <div class="card-header bg-warning text-dark">
-        <h5 class="mb-0"><i class="bi bi-star-fill"></i> Recommended Pickups for {{ team_name }}</h5>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead>
-                    <tr>
-                        <th>Player</th>
-                        <th>Pos</th>
-                        <th class="text-end">Projected</th>
-                        <th class="text-end">Avg Pts</th>
-                        <th>Replaces</th>
-                        <th class="text-end">Upgrade/Wk</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for rec in recommendations[:10] %}
-                    <tr>
-                        <td class="fw-bold">
-                            {{ rec.name }}
-                            {% if rec.name in player_news %}
-                            <i class="bi bi-newspaper text-info ms-1" title="News available" data-bs-toggle="tooltip"></i>
-                            {% endif %}
-                            <br><small class="text-muted">{{ rec.team }}{% if rec.injury_status and rec.injury_status != 'Active' %} &middot; <span class="text-danger">{{ rec.injury_status }}</span>{% endif %}</small>
-                        </td>
-                        <td><span class="pos-badge">{{ rec.position }}</span></td>
-                        <td class="text-end">{{ "%.1f"|format(rec.projected_points) }}</td>
-                        <td class="text-end">{{ "%.1f"|format(rec.avg_points) }}</td>
-                        <td class="text-muted">{{ rec.get('replaces', 'N/A') }}</td>
-                        <td class="text-end text-success fw-bold">+{{ "%.1f"|format(rec.get('upgrade_per_week', 0)) }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
+<p><strong>Advisory only—claims must be entered in ESPN.</strong></p>
+{% if error %}<div class="alert alert-danger" role="alert">{{ error }} No bids or claims generated.</div>{% endif %}
+{% if waiver %}
+<p>{{ waiver.processing_time.value or 'Processing time: verify in ESPN' }} ({{ waiver.processing_time.source }}).</p>
+<p>FAAB: ${{ waiver.faab.mine.remaining }} remaining of ${{ waiver.faab.budget }} · {{ waiver.franchise_rule }}</p>
+{% for warning in waiver.faab.warnings %}<p class="text-warning">{{ warning }}</p>{% endfor %}
+<details class="mb-3"><summary>Bid assumptions and settings to verify</summary>
+<ul>{% for item in waiver.assumptions %}<li>{{ item }}</li>{% endfor %}
+{% for key, value in waiver.verify_in_espn.items() %}<li>{{ key|replace('_', ' ') }}: {{ value }}</li>{% endfor %}</ul></details>
+<div class="card mb-4"><div class="card-header">Roster-aware recommendations</div><div class="card-body">
+{% for rec in recommendations %}
+<div class="border-bottom py-3"><strong>{{ rec.name }} · {{ rec.position }}</strong>
+<span class="badge bg-warning text-dark">Estimate ${{ rec.faab.bid }} (${{ rec.faab.low }}–${{ rec.faab.high }})</span>
+<div>{{ rec.reason }}</div>
+<small>{{ '%.1f'|format(rec.ros_per_game) }} ROS points/playable game · {{ rec.remaining_playable_weeks }} playable weeks · {{ rec.faab.tier }}{% if rec.on_bye %} · BYE this week{% endif %}</small>
+<details><summary>Why this bid?</summary>
+<p>Lineup + bench marginal: {{ rec.faab.lineup_marginal }}; depth: {{ rec.faab.depth_premium }}; fragility: {{ rec.faab.fragility_premium }}; bye/injury: {{ rec.faab.coverage_premium }} points/game.</p>
+<p>Replacement: {{ '%.1f'|format(rec.faab.replacement_level.value) }} points/game (pool rank {{ rec.faab.replacement_level.rank }}); points above replacement: {{ rec.faab.points_over_replacement }}. Market ×{{ rec.faab.market_adjustment }}, history ×{{ rec.faab.aggressiveness }}, season clock ×{{ rec.faab.season_clock_adjustment }}.</p>
+<p>{{ rec.faab.rival_label }}</p><ul>{% for r in rec.faab.rivals[:3] %}<li>{{ r.team }}: {% if r.error %}{{ r.error }}{% else %}${{ r.low }}–${{ r.high }} · {{ r.demand.reason }}{% endif %}</li>{% endfor %}</ul>
+</details></div>
+{% else %}<p>No material roster improvements in the available pool.</p>{% endfor %}
+</div></div>
+<div class="card mb-4"><div class="card-header">Draft claim plan · maximum run spend ${{ waiver.claim_plan.max_spend }}</div><div class="card-body">
+<p>{{ waiver.claim_plan.alternatives_policy }}</p>
+<ol>{% for claim in waiver.claim_plan.claims %}<li>{{ claim.player }} · {{ claim.role }} · ${{ claim.bid }} · Drop: {{ claim.drop_player or 'open roster slot' }}{% if claim.drop_player %} ({{ claim.drop_ros_per_game }} ROS points/game){% endif %} · ${{ claim.remaining_if_all_prior_succeed }} left if this and prior claims succeed.</li>{% else %}<li>No safe automatic proposal. Review available roster space and drops in ESPN.</li>{% endfor %}</ol>
+<p>All-success spend: ${{ waiver.claim_plan.total_possible_spend }}. Balance afterward: ${{ waiver.claim_plan.remaining_if_all_succeed }}.</p>
+</div></div>
 {% endif %}
 
 {# Top Free Agents #}
@@ -205,6 +192,7 @@
 <div class="card mb-4">
     <div class="card-body">
         <form id="ai-waiver-form">
+            <input type="hidden" name="team_id" value="{{ team_id or '' }}">
             <input type="hidden" name="team_name" value="{{ team_name or '' }}">
             <input type="hidden" name="week" value="{{ week }}">
             <button type="submit" class="btn btn-info" id="ai-waiver-btn">

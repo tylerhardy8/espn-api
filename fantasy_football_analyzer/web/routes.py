@@ -620,100 +620,49 @@ def trade_ai_advice(config, league, team_name):
 
 @bp.route("/waivers")
 def waivers():
+    from ..waiver_service import build_waiver_payload
     config, league, err = get_league_or_redirect()
     if err:
         return err
-
-    team_name = request.args.get("team", config.get("team_name"))
-    teams = sorted([t.team_name for t in league.teams])
-    week = request.args.get("week", type=int) or league.current_week
-
+    payload, error = {}, None
     try:
-        top_agents = get_top_free_agents(league, week=week, size=30)
-    except Exception:
-        top_agents = []
-
-    try:
-        streamers = find_streamers(league, week=week)
-    except Exception:
-        streamers = {}
-
-    try:
-        recommendations = get_waiver_recommendations(league, my_team_name=team_name, week=week)
-    except Exception:
-        recommendations = []
-
-    # Fetch RSS news and match to players
-    news_items = []
-    player_news = {}
-    try:
-        news_items = fetch_news(max_items=25)
-        # Build list of player names from top agents and recommendations
-        player_names = [a["name"] for a in top_agents]
-        player_names += [r["name"] for r in recommendations if r.get("name")]
-        player_names = list(set(player_names))  # deduplicate
-        player_news = match_news_to_players(news_items, player_names)
-    except Exception:
-        pass
-
-    return render_template(
-        "waivers.html",
-        top_agents=top_agents,
-        streamers=streamers,
-        recommendations=recommendations,
-        team_name=team_name,
-        week=week,
-        teams=teams,
-        ai_available=ai_available(),
-        news_items=news_items,
-        player_news=player_news,
-    )
+        payload = build_waiver_payload(league, config, team_id=request.args.get('team_id'),
+                                      team_name=request.args.get('team'), week=request.args.get('week'),
+                                      max_spend=(int(request.args['max_spend']) if request.args.get('max_spend') else None), refresh=True)
+    except Exception as exc:
+        error = str(exc)
+    from .panel_api import _waiver_news
+    news_items, player_news = _waiver_news(payload) if payload else ([], {})
+    return render_template('waivers.html', waiver=payload, error=error,
+        teams=sorted(league.teams, key=lambda t: t.team_name),
+        team_name=payload.get('team', ''), team_id=payload.get('team_id'),
+        week=payload.get('week', league.current_week), recommendations=payload.get('recommendations', []),
+        top_agents=payload.get('top_agents', []), streamers=payload.get('streamers', {}),
+        player_news=player_news, news_items=news_items, ai_available=ai_available(config) and not error)
 
 
 @bp.route("/waivers/ai", methods=["POST"])
 def waivers_ai():
     config, league, err = get_league_or_redirect()
     if err:
-        return "<p class='text-danger'>Could not connect to league.</p>"
-
-    team_name = request.form.get("team_name", config.get("team_name"))
-    week = request.form.get("week", type=int) or league.current_week
+        return "<p class='text-danger'>Could not connect to league.</p>", 503
     try:
-        advice = waiver_ai_advice(config, league, team_name, week)
-        return render_template("partials/_ai_section.html", advice=advice, title="AI Waiver Analysis")
-    except Exception as e:
-        return f"<p class='text-danger'>AI analysis error: {e}</p>"
-
-
-def waiver_ai_advice(config, league, team_name, week):
-    """Claude's waiver analysis (shared by the page and the panel API)."""
-    from ..ai_advisor import get_waiver_advice_ai
-    from ..waivers import format_waiver_report
-
-    report = format_waiver_report(league, my_team_name=team_name, week=week)
-    try:
-        from .panel_api import attach_faab_bids
-        recs = get_waiver_recommendations(league, my_team_name=team_name, week=week)[:10]
-        faab, history = attach_faab_bids(league, config, team_name, recs, [])
-        if faab and faab.get("enabled"):
-            mine = faab.get("mine") or {}
-            lines = [f"\nFAAB: ${faab['budget']} budget; I have ${mine.get('remaining', '?')} left. "
-                     f"Rivals' remaining: " + ", ".join(f"{t['team']} ${t['remaining']}" for t in faab['teams'][:6])
-                     + f". Winning bids so far this season: {len(history)}"
-                     + (" (" + ", ".join(f"{h['player']} ${h['bid']}" for h in history[:6]) + ")" if history else "") + "."]
-            lines.append("Suggested bids (model): " + "; ".join(
-                f"{r['name']} ${r['faab']['bid']} ({r['faab']['tier']}, rival ~${r['faab']['expected_rival']})"
-                for r in recs if r.get("faab")))
-            report += "\n".join(lines)
+        advice = waiver_ai_advice(config, league, request.form.get('team_name'),
+                                  request.form.get('week'), team_id=request.form.get('team_id'))
+        return render_template('partials/_ai_section.html', advice=advice, title='AI Waiver Analysis')
     except Exception:
-        pass
-    prompt = "Here is my league's waiver wire report"
-    if team_name:
-        prompt += f" (I manage '{team_name}')"
-    prompt += (
-        ". Provide strategic recommendations on who to pick up, who to drop, "
-        "and any sleepers to target.\n\n" + report
-    )
+        return "<p class='text-danger'>Waiver inputs could not be verified. Refresh the waiver page before requesting analysis.</p>", 422
+
+
+def waiver_ai_advice(config, league, team_name, week, team_id=None):
+    """Only validated values and spending constraints enter the AI context."""
+    import json
+    from ..ai_advisor import get_waiver_advice_ai
+    from ..waiver_service import build_waiver_payload
+    payload = build_waiver_payload(league, config, team_id=team_id, team_name=team_name, week=week, refresh=True)
+    prompt = ('Explain this advisory waiver plan. Do not invent balances, bid amounts, '
+              'claim rules, or return dates. Preserve the maximum total spend and verification '
+              'requirements. Claims must be entered in ESPN.\n' + json.dumps(payload))
     return get_waiver_advice_ai(prompt, api_key=get_ai_key(config))
 
 
@@ -761,6 +710,7 @@ def api_me():
         "league_id": config.get("league_id"),
         "year": config.get("year"),
         "team_name": config.get("team_name") or "",
+        "team_id": config.get("team_id") or None,
         "ai_available": ai_available(config),
     })
 
